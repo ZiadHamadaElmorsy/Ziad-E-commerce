@@ -1,0 +1,23 @@
+# Dependencies / build output
+node_modules/
+.next/
+out/
+dist/
+build/
+coverage/
+
+# Lockfiles
+package-lock.json
+npm-shrinkwrap.json
+
+# Project documentation (do not reformat)
+docs/
+
+# Git / IDE / OS
+.git/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# TypeScript build info
+*.tsbuildinfo

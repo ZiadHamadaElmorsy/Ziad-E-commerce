@@ -1,0 +1,41 @@
+{
+  "name": "ziad-ecommerce",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Ziad E-commerce — Egypt-first SaaS e-commerce platform. Modular monolith: Next.js + NestJS + PostgreSQL/Supabase.",
+  "workspaces": [
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=20.9.0",
+    "npm": ">=10.0.0"
+  },
+  "scripts": {
+    "dev": "npm run dev:api & npm run dev:web",
+    "dev:api": "npm run start:dev -w @ziad/api",
+    "dev:web": "npm run dev -w @ziad/web",
+    "build": "npm run build -w @ziad/api && npm run build -w @ziad/web",
+    "lint": "npm run lint --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "test:e2e": "npm run test:e2e -w @ziad/api",
+    "format:check": "prettier --check .",
+    "format:write": "prettier --write .",
+    "db:validate": "cross-env DATABASE_URL=postgresql://postgres:postgres@localhost:5432/ziad_dev prisma validate --schema apps/api/prisma/schema.prisma",
+    "db:generate": "prisma generate --schema apps/api/prisma/schema.prisma",
+    "db:migrate": "prisma migrate dev --schema apps/api/prisma/schema.prisma",
+    "db:deploy": "prisma migrate deploy --schema apps/api/prisma/schema.prisma",
+    "postinstall": "npm run db:generate"
+  },
+  "devDependencies": {
+    "cross-env": "^10.1.0",
+    "js-yaml": "^5.2.3",
+    "prettier": "^3.9.6",
+    "prisma": "^6.19.3"
+  },
+  "overrides": {
+    "@nestjs/swagger": {
+      "js-yaml": "^5.2.3"
+    }
+  }
+}

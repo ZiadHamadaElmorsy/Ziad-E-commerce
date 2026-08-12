@@ -1,0 +1,15 @@
+// Ziad E-commerce — Phase 0 database foundation.
+// ---------------------------------------------------------------------------
+// Connection + migration tooling only. No business schema yet.
+// Business tables are added through versioned migrations in later phases,
+// following docs/DATABASE.md. Do not invent tables here.
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../../../node_modules/.prisma/client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
