@@ -2,6 +2,12 @@ import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { HttpAdapterHost } from '@nestjs/core';
 import type { ArgumentsHost } from '@nestjs/common';
 import { AllExceptionsFilter } from './all-exceptions.filter';
+import {
+  IdempotencyConflictError,
+  NotFoundError,
+  StateTransitionError,
+  UnauthorizedError,
+} from '../errors/domain-exceptions';
 
 describe('AllExceptionsFilter', () => {
   let httpAdapter: { reply: jest.Mock };
@@ -13,7 +19,7 @@ describe('AllExceptionsFilter', () => {
     httpAdapterHost = { httpAdapter } as unknown as HttpAdapterHost;
     host = {
       switchToHttp: () => ({
-        getRequest: () => ({ method: 'GET', originalUrl: '/api/v1/test' }),
+        getRequest: () => ({ method: 'GET', originalUrl: '/api/v1/test', requestId: 'req-1' }),
         getResponse: () => ({}),
       }),
     } as unknown as ArgumentsHost;
@@ -54,6 +60,41 @@ describe('AllExceptionsFilter', () => {
       },
       400,
     );
+  });
+
+  it('renders domain errors with their explicit code, message and details', () => {
+    const filter = new AllExceptionsFilter(httpAdapterHost);
+    const exception = new StateTransitionError('Cannot cancel a DELIVERED order.', {
+      from: 'DELIVERED',
+      to: 'CANCELLED',
+    });
+
+    filter.catch(exception, host);
+
+    expect(httpAdapter.reply).toHaveBeenCalledWith(
+      expect.anything(),
+      {
+        error: {
+          code: 'STATE_TRANSITION',
+          message: 'Cannot cancel a DELIVERED order.',
+          details: { from: 'DELIVERED', to: 'CANCELLED' },
+        },
+      },
+      409,
+    );
+  });
+
+  it('prefers the domain error code over the HTTP-status fallback mapping', () => {
+    const filter = new AllExceptionsFilter(httpAdapterHost);
+
+    filter.catch(new NotFoundError('Product not found.'), host);
+    expect(httpAdapter.reply.mock.calls[0][1].error.code).toBe('NOT_FOUND');
+
+    filter.catch(new UnauthorizedError('Expired token.'), host);
+    expect(httpAdapter.reply.mock.calls[1][1].error.code).toBe('UNAUTHORIZED');
+
+    filter.catch(new IdempotencyConflictError(), host);
+    expect(httpAdapter.reply.mock.calls[2][1].error.code).toBe('IDEMPOTENCY_CONFLICT');
   });
 
   it('never leaks internal error details to the client', () => {

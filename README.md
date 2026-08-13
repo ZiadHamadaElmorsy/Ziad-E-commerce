@@ -82,6 +82,48 @@ npm run db:generate   # regenerate the Prisma client
 | `npm run test:e2e`                              | API end-to-end tests                                |
 | `npm run format:check` / `npm run format:write` | Prettier across the repo                            |
 
+### Web
+
+- Admin dashboard (client-rendered, Supabase Auth): `http://localhost:3000/login`
+- The dashboard consumes the real API at `NEXT_PUBLIC_API_URL` with the
+  authenticated Supabase session (Bearer access token attached automatically).
+- Merchant modules: Dashboard (real product/order/revenue metrics), Products &
+  Variants (CRUD, publish/unpublish/archive, SKU, compare-at pricing, category
+  assignment), Categories (CRUD, archive, products-in-category), Orders (list,
+  details, lifecycle status transitions, payment initiation/status), Customers
+  (list, details, order history), Inventory (per-variant stock levels +
+  adjustments + movements), Media (Supabase Storage upload/delete via the real
+  API), Store & Settings (store name editing, subscription, account), full
+  English/Arabic internationalization with LTR/RTL layout.
+- Unit tests: `npm test -w @ziad/web` (Vitest + Testing Library)
+
+## End-to-end testing
+
+The primary testing approach is full end-to-end frontend testing with
+Playwright (`apps/web/e2e`) — real browser → real UI → real Supabase
+session → real API → real database. No mocks.
+
+Prerequisites (all three must be running):
+
+1. API: `npm run dev:api` (`http://localhost:4000`)
+2. Web: `npm run dev:web` (`http://localhost:3000`)
+3. A real Supabase merchant with an ACTIVE store membership. The spec reads
+   `E2E_EMAIL` / `E2E_PASSWORD` (defaults to the local development merchant
+   `e2e.merchant@ziad.test`).
+
+Run the suite:
+
+```bash
+npm run test:e2e -w @ziad/web   # npx playwright test in apps/web
+```
+
+The suite covers: login through the UI, `/auth/me` resolution, category
+create/edit/archive, product create/edit/publish/unpublish/archive, variant
+create/edit/archive, category assignment, real API error rendering
+(e.g. duplicate SKU conflicts), orders/customers/media/store rendering,
+real inventory adjustments, and the Arabic/RTL switch.
+
+
 ### API
 
 - Health: `GET http://localhost:4000/api/v1/health`

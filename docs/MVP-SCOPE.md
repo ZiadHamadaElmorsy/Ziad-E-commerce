@@ -169,7 +169,11 @@ Variants
 9. Product Variants
 IN SCOPE
 
-Products may contain variants.
+Every Product MUST have at least one ProductVariant.
+
+A simple product uses a single Default ProductVariant.
+
+Products may also contain multiple variants.
 
 Variant information:
 
@@ -203,7 +207,9 @@ Archive Category
 View Category
 Assign Products to Categories
 
-Products may belong to multiple Categories if supported by the final domain model.
+Products may belong to multiple Categories.
+
+The final domain model confirms that Product <-> Category is MANY-TO-MANY through ProductCategory.
 
 11. Inventory Management
 IN SCOPE

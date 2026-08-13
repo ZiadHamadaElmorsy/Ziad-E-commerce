@@ -1,8 +1,28 @@
-// Ziad E-commerce — Phase 0 database foundation.
+// Ziad E-commerce - FINAL database schema (MVP: exactly 28 tables).
 // ---------------------------------------------------------------------------
-// Connection + migration tooling only. No business schema yet.
-// Business tables are added through versioned migrations in later phases,
-// following docs/DATABASE.md. Do not invent tables here.
+// Source of truth:
+//   docs/DOMAIN-MODEL.md v2.0 (FINAL)
+//   docs/DATABASE.md     v2.0 (FINAL)
+// Architecture: PostgreSQL + Supabase (shared schema + Row-Level Security).
+//
+// Implementation notes:
+//   - Every table uses `id uuid PRIMARY KEY DEFAULT gen_random_uuid()`.
+//   - Money is BIGINT integer minor units (EGP piastres); no floating point.
+//   - Quantities are INTEGER.
+//   - Timestamps are timestamptz; immutable tables carry created_at only.
+//   - Tenant-safe composite FKs (store_id, parent_id) -> parent(store_id, id)
+//     are backed by @@unique([storeId, id]) on the parent tables listed in
+//     DATABASE.md section 9.1 (products, product_variants, categories,
+//     customers, orders, pages, media).
+//   - PostgreSQL-specific constraints that Prisma cannot express are added in
+//     the migration SQL (see migrations/.../migration.sql):
+//       * CHECK constraints (quantity > 0, money >= 0, on_hand >= reserved,
+//         cart/reservation context, order total consistency)
+//       * partial UNIQUE indexes (single OWNER per store, guest cart token,
+//         idempotency keys, provider_reference, webhook dedup)
+//       * partial payment_events processing_status index (retry scan)
+//       * Row-Level Security foundation (section 29 of DATABASE.md)
+//   - Checkout is NOT persisted. No checkout table.
 
 generator client {
   provider = "prisma-client-js"
@@ -10,6 +30,835 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums - values are authoritative (DATABASE.md section 12).
+// Postgres native ENUM types (technical decision 1 of DATABASE.md section 33).
+// ---------------------------------------------------------------------------
+
+enum StoreStatus {
+  ACTIVE
+  DISABLED
+  SUSPENDED
+
+  @@map("store_status")
+}
+
+enum SubscriptionStatus {
+  TRIAL
+  ACTIVE
+  EXPIRED
+
+  @@map("subscription_status")
+}
+
+enum MembershipRole {
+  OWNER
+  ADMIN
+  STAFF
+
+  @@map("membership_role")
+}
+
+enum MembershipStatus {
+  ACTIVE
+  INACTIVE
+
+  @@map("membership_status")
+}
+
+enum ProductStatus {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+
+  @@map("product_status")
+}
+
+enum VariantStatus {
+  ACTIVE
+  ARCHIVED
+
+  @@map("variant_status")
+}
+
+enum CategoryStatus {
+  ACTIVE
+  ARCHIVED
+
+  @@map("category_status")
+}
+
+enum ReservationStatus {
+  ACTIVE
+  CONSUMED
+  RELEASED
+
+  @@map("reservation_status")
+}
+
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  PROCESSING
+  SHIPPED
+  DELIVERED
+  CANCELLED
+
+  @@map("order_status")
+}
+
+enum PaymentStatus {
+  PENDING
+  PROCESSING
+  SUCCEEDED
+  FAILED
+
+  @@map("payment_status")
+}
+
+enum CartStatus {
+  ACTIVE
+  EXPIRED
+  COMPLETED
+
+  @@map("cart_status")
+}
+
+enum PageStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+
+  @@map("page_status")
+}
+
+enum MovementType {
+  INITIAL_STOCK
+  ADJUSTMENT
+  SALE
+  RESERVATION
+  CONSUMPTION
+  RELEASE
+
+  @@map("movement_type")
+}
+
+enum EventProcessingStatus {
+  RECEIVED
+  PROCESSED
+  ERROR
+
+  @@map("event_processing_status")
+}
+
+enum MediaType {
+  IMAGE
+  VIDEO
+  FILE
+
+  @@map("media_type")
+}
+
+// ---------------------------------------------------------------------------
+// 1. IDENTITY / ACCESS
+// ---------------------------------------------------------------------------
+
+/// Platform-level application user (mirror of the Supabase Auth identity).
+/// Ownership: platform-level; NOT Store-owned. RLS: a user may access their own row.
+model User {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  authUserId String   @unique @map("auth_user_id") @db.Uuid
+  firstName  String   @map("first_name")
+  lastName   String   @map("last_name")
+  email      String   @unique
+  phone      String?
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt  DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  memberships StoreMembership[]
+  auditLogs   AuditLog[]
+
+  @@map("users")
+}
+
+/// The merchant's store - the tenant boundary.
+model Store {
+  id          String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String
+  slug        String      @unique
+  description String?
+  status      StoreStatus @default(ACTIVE)
+  currency    String      @default("EGP") @db.Char(3)
+  timezone    String      @default("Africa/Cairo")
+  createdAt   DateTime    @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime    @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  memberships           StoreMembership[]
+  subscription          Subscription?
+  products              Product[]
+  productVariants       ProductVariant[]
+  categories            Category[]
+  productCategories     ProductCategory[]
+  inventory             Inventory[]
+  inventoryReservations InventoryReservation[]
+  inventoryMovements    InventoryMovement[]
+  customers             Customer[]
+  customerAddresses     CustomerAddress[]
+  carts                 Cart[]
+  orders                Order[]
+  payments              Payment[]
+  paymentEvents         PaymentEvent[]
+  pages                 Page[]
+  pageSections          PageSection[]
+  navigations           Navigation[]
+  themeConfigurations   ThemeConfiguration?
+  media                 Media[]
+  productMedia          ProductMedia[]
+  storeSettings         StoreSettings?
+  auditLogs             AuditLog[]
+
+  @@index([status])
+  @@map("stores")
+}
+
+/// Grants a User access to a Store with a fixed role (OWNER/ADMIN/STAFF).
+model StoreMembership {
+  id        String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  storeId   String           @map("store_id") @db.Uuid
+  userId    String           @map("user_id") @db.Uuid
+  role      MembershipRole
+  status    MembershipStatus @default(ACTIVE)
+  createdAt DateTime         @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime         @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  // Partial unique (store_id) WHERE role = 'OWNER' is added in migration SQL
+  // (at most one OWNER per store) - Prisma cannot express partial unique indexes.
+  @@unique([storeId, userId])
+  @@index([storeId])
+  @@index([userId])
+  @@map("store_memberships")
+}
+
+/// Commercial subscription / access state of a Store (1:1).
+model Subscription {
+  id             String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  storeId        String             @unique @map("store_id") @db.Uuid
+  status         SubscriptionStatus @default(TRIAL)
+  trialStartedAt DateTime?          @map("trial_started_at") @db.Timestamptz
+  trialEndsAt    DateTime?          @map("trial_ends_at") @db.Timestamptz
+  activatedAt    DateTime?          @map("activated_at") @db.Timestamptz
+  expiresAt      DateTime?          @map("expires_at") @db.Timestamptz
+  createdAt      DateTime           @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime           @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Restrict)
+
+  @@index([status])
+  @@map("subscriptions")
+}
+
+// ---------------------------------------------------------------------------
+// 2. CATALOG
+// ---------------------------------------------------------------------------
+
+/// The logical sellable product. Every Product MUST have at least one
+/// ProductVariant (application-enforced at creation).
+model Product {
+  id          String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  storeId     String        @map("store_id") @db.Uuid
+  name        String
+  slug        String
+  description String?
+  status      ProductStatus @default(DRAFT)
+  createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  store             Store             @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  variants          ProductVariant[]
+  productCategories ProductCategory[]
+  productMedia      ProductMedia[]
+  orderItems        OrderItem[]
+
+  // Composite-FK target (store_id, id) per DATABASE.md section 9.1.
+  @@unique([storeId, id])
+  @@unique([storeId, slug])
+  @@index([storeId])
+  @@index([storeId, status])
+  @@map("products")
+}
+
+/// The purchasable unit; the inventory boundary. Inventory belongs to the
+/// variant, never the product.
+model ProductVariant {
+  id             String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  storeId        String        @map("store_id") @db.Uuid
+  productId      String        @map("product_id") @db.Uuid
+  name           String
+  sku            String?
+  price          BigInt        @db.BigInt
+  compareAtPrice BigInt?       @map("compare_at_price") @db.BigInt
+  costPrice      BigInt?       @map("cost_price") @db.BigInt
+  status         VariantStatus @default(ACTIVE)
+  createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  store        Store                  @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  product      Product                @relation(fields: [storeId, productId], references: [storeId, id], onDelete: Cascade)
+  inventory    Inventory?
+  reservations InventoryReservation[]
+  movements    InventoryMovement[]
+  cartItems    CartItem[]
+  orderItems   OrderItem[]
+  productMedia ProductMedia[]
+
+  // Composite-FK target (store_id, id) per DATABASE.md section 9.1.
+  @@unique([storeId, id])
+  @@unique([storeId, sku])
+  @@index([productId])
+  @@index([storeId, status])
+  @@map("product_variants")
+}
+
+/// Catalog classification. Flat in the MVP (no parent/child hierarchy).
+model Category {
+  id          String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  storeId     String         @map("store_id") @db.Uuid
+  name        String
+  slug        String
+  description String?
+  status      CategoryStatus @default(ACTIVE)
+  createdAt   DateTime       @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime       @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  store             Store             @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  productCategories ProductCategory[]
+
+  // Composite-FK target (store_id, id) per DATABASE.md section 9.1.
+  @@unique([storeId, id])
+  @@unique([storeId, slug])
+  @@map("categories")
+}
+
+/// N:M link between Products and Categories (FINALIZED cardinality - never 1:N).
+model ProductCategory {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  storeId    String   @map("store_id") @db.Uuid
+  productId  String   @map("product_id") @db.Uuid
+  categoryId String   @map("category_id") @db.Uuid
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  store    Store    @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  product  Product  @relation(fields: [storeId, productId], references: [storeId, id], onDelete: Cascade)
+  category Category @relation(fields: [storeId, categoryId], references: [storeId, id], onDelete: Cascade)
+
+  @@unique([productId, categoryId])
+  @@index([categoryId])
+  @@index([productId])
+  @@map("product_categories")
+}
+
+// ---------------------------------------------------------------------------
+// 3. INVENTORY
+// ---------------------------------------------------------------------------
+
+/// Current stock state of one ProductVariant (1:1).
+/// available = on_hand_quantity - reserved_quantity (derived, never stored).
+model Inventory {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  storeId          String   @map("store_id") @db.Uuid
+  variantId        String   @unique @map("variant_id") @db.Uuid
+  onHandQuantity   Int      @map("on_hand_quantity")
+  reservedQuantity Int      @default(0) @map("reserved_quantity")
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  store   Store          @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  variant ProductVariant @relation(fields: [storeId, variantId], references: [storeId, id], onDelete: Cascade)
+
+  // CHECK (on_hand_quantity >= 0), CHECK (reserved_quantity >= 0) and
+  // CHECK (on_hand_quantity >= reserved_quantity) are added in migration SQL.
+  // @@unique([storeId, variantId]) is required by Prisma for the 1:1
+  // composite relation; variant_id is already UNIQUE (1:1 inventory).
+  @@unique([storeId, variantId])
+  @@map("inventory")
+}
+
+/// Temporary inventory reservation during the checkout/order lifecycle.
+/// Lifecycle (exactly): ACTIVE -> CONSUMED or ACTIVE -> RELEASED.
+/// EXPIRED / CONVERTED are NOT states.
+model InventoryReservation {
+  id         String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  storeId    String            @map("store_id") @db.Uuid
+  variantId  String            @map("variant_id") @db.Uuid
+  cartId     String?           @map("cart_id") @db.Uuid
+  orderId    String?           @map("order_id") @db.Uuid
+  quantity   Int
+  status     ReservationStatus @default(ACTIVE)
+  expiresAt  DateTime?         @map("expires_at") @db.Timestamptz
+  releasedAt DateTime?         @map("released_at") @db.Timestamptz
+  consumedAt DateTime?         @map("consumed_at") @db.Timestamptz
+  createdAt  DateTime          @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt  DateTime          @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  store   Store          @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  variant ProductVariant @relation(fields: [storeId, variantId], references: [storeId, id], onDelete: Restrict)
+  cart    Cart?          @relation(fields: [cartId], references: [id], onDelete: SetNull)
+  order   Order?         @relation(fields: [orderId], references: [id], onDelete: SetNull)
+
+  // CHECK (quantity > 0) and CHECK (cart_id IS NOT NULL OR order_id IS NOT NULL)
+  // are added in migration SQL.
+  @@index([storeId, status, expiresAt])
+  @@index([variantId])
+  @@index([orderId])
+  @@map("inventory_reservations")
+}
+
+/// Immutable audit record of every inventory change (append-only).
+model InventoryMovement {
+  id            String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  storeId       String       @map("store_id") @db.Uuid
+  variantId     String       @map("variant_id") @db.Uuid
+  movementType  MovementType @map("movement_type")
+  quantity      Int
+  referenceType String?      @map("reference_type")
+  referenceId   String?      @map("reference_id") @db.Uuid
+  reason        String?
+  onHandAfter   Int          @map("on_hand_after")
+  reservedAfter Int          @map("reserved_after")
+  createdAt     DateTime     @default(now()) @map("created_at") @db.Timestamptz
+
+  store   Store          @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  variant ProductVariant @relation(fields: [storeId, variantId], references: [storeId, id], onDelete: Restrict)
+
+  @@index([variantId, createdAt])
+  @@map("inventory_movements")
+}
+
+// ---------------------------------------------------------------------------
+// 4. CUSTOMERS
+// ---------------------------------------------------------------------------
+
+/// A customer who purchases from a Store. Accounts are OPTIONAL
+/// (guest checkout supported). No lifecycle status column.
+model Customer {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  storeId    String   @map("store_id") @db.Uuid
+  email      String?
+  phone      String?
+  firstName  String   @map("first_name")
+  lastName   String   @map("last_name")
+  authUserId String?  @map("auth_user_id") @db.Uuid
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt  DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  store     Store             @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  addresses CustomerAddress[]
+  carts     Cart[]
+  orders    Order[]
+
+  // Composite-FK target (store_id, id) per DATABASE.md section 9.1.
+  @@unique([storeId, id])
+  @@unique([storeId, email])
+  @@index([storeId])
+  @@map("customers")
+}
+
+/// Reusable customer addresses. Historical orders snapshot their own
+/// shipping/billing data and never depend on these rows.
+model CustomerAddress {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  storeId     String   @map("store_id") @db.Uuid
+  customerId  String   @map("customer_id") @db.Uuid
+  label       String?
+  firstName   String   @map("first_name")
+  lastName    String   @map("last_name")
+  phone       String?
+  country     String?
+  governorate String?
+  city        String
+  addressLine String   @map("address_line")
+  building    String?
+  apartment   String?
+  postalCode  String?  @map("postal_code")
+  isDefault   Boolean  @default(false) @map("is_default")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  store    Store    @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  customer Customer @relation(fields: [storeId, customerId], references: [storeId, id], onDelete: Cascade)
+
+  @@index([customerId])
+  @@map("customer_addresses")
+}
+
+// ---------------------------------------------------------------------------
+// 5. COMMERCE - CART
+// ---------------------------------------------------------------------------
+
+/// Persistent shopping session. Authenticated-customer (customer_id) or
+/// guest (guest_token) carts are supported. Cart pricing is NOT authoritative.
+model Cart {
+  id          String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  storeId     String     @map("store_id") @db.Uuid
+  customerId  String?    @map("customer_id") @db.Uuid
+  guestToken  String?    @map("guest_token")
+  status      CartStatus @default(ACTIVE)
+  currency    String     @default("EGP") @db.Char(3)
+  expiresAt   DateTime?  @map("expires_at") @db.Timestamptz
+  completedAt DateTime?  @map("completed_at") @db.Timestamptz
+  createdAt   DateTime   @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  store        Store                  @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  customer     Customer?              @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  items        CartItem[]
+  reservations InventoryReservation[]
+
+  // CHECK (customer_id IS NOT NULL OR guest_token IS NOT NULL) is added in
+  // migration SQL. Partial unique (store_id, guest_token) WHERE guest_token
+  // IS NOT NULL is also added in migration SQL (Prisma cannot express partial
+  // unique indexes).
+  @@index([storeId, customerId])
+  @@index([storeId, status, expiresAt])
+  @@map("carts")
+}
+
+/// A ProductVariant + quantity in a Cart (one line per variant per cart).
+model CartItem {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  cartId    String   @map("cart_id") @db.Uuid
+  variantId String   @map("variant_id") @db.Uuid
+  quantity  Int
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  cart    Cart           @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  variant ProductVariant @relation(fields: [variantId], references: [id], onDelete: Restrict)
+
+  // CHECK (quantity > 0) is added in migration SQL.
+  @@unique([cartId, variantId])
+  @@index([cartId])
+  @@map("cart_items")
+}
+
+// ---------------------------------------------------------------------------
+// 5. COMMERCE - ORDER
+// ---------------------------------------------------------------------------
+
+/// A completed checkout order. NO payment_status column - order status and
+/// payment status are separate state machines (DATABASE.md section 15.6).
+model Order {
+  id                      String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  storeId                 String      @map("store_id") @db.Uuid
+  orderNumber             String      @map("order_number")
+  customerId              String?     @map("customer_id") @db.Uuid
+  status                  OrderStatus @default(PENDING)
+  currency                String      @db.Char(3)
+  subtotal                BigInt      @db.BigInt
+  discountTotal           BigInt      @default(0) @map("discount_total") @db.BigInt
+  shippingTotal           BigInt      @map("shipping_total") @db.BigInt
+  taxTotal                BigInt      @map("tax_total") @db.BigInt
+  grandTotal              BigInt      @map("grand_total") @db.BigInt
+  customerEmail           String?     @map("customer_email")
+  customerPhone           String?     @map("customer_phone")
+  shippingAddressSnapshot Json        @map("shipping_address_snapshot")
+  billingAddressSnapshot  Json?       @map("billing_address_snapshot")
+  idempotencyKey          String?     @map("idempotency_key")
+  createdAt               DateTime    @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt               DateTime    @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  confirmedAt             DateTime?   @map("confirmed_at") @db.Timestamptz
+  cancelledAt             DateTime?   @map("cancelled_at") @db.Timestamptz
+
+  store        Store                  @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  customer     Customer?              @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  items        OrderItem[]
+  payments     Payment[]
+  reservations InventoryReservation[]
+
+  // Composite-FK target (store_id, id) per DATABASE.md section 9.1.
+  // Partial unique (store_id, idempotency_key) WHERE idempotency_key
+  // IS NOT NULL is added in migration SQL.
+  // CHECK constraints on money fields and grand_total consistency are added
+  // in migration SQL.
+  @@unique([storeId, id])
+  @@unique([storeId, orderNumber])
+  @@index([storeId, createdAt(sort: Desc)])
+  @@index([storeId, status])
+  @@index([storeId, customerId])
+  @@map("orders")
+}
+
+/// Purchased variant with purchase-time snapshots (historical integrity).
+model OrderItem {
+  id                  String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orderId             String   @map("order_id") @db.Uuid
+  productId           String?  @map("product_id") @db.Uuid
+  variantId           String?  @map("variant_id") @db.Uuid
+  productNameSnapshot String   @map("product_name_snapshot")
+  variantNameSnapshot String   @map("variant_name_snapshot")
+  skuSnapshot         String?  @map("sku_snapshot")
+  unitPrice           BigInt   @map("unit_price") @db.BigInt
+  quantity            Int
+  lineTotal           BigInt   @map("line_total") @db.BigInt
+  createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  order   Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product Product?        @relation(fields: [productId], references: [id], onDelete: SetNull)
+  variant ProductVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+
+  // CHECK (quantity > 0) and CHECK (line_total >= 0) are added in migration SQL.
+  @@index([orderId])
+  @@map("order_items")
+}
+
+// ---------------------------------------------------------------------------
+// 5. COMMERCE - PAYMENT
+// ---------------------------------------------------------------------------
+
+/// Provider-agnostic payment record for an Order (Order 1:N Payment).
+/// Paymob-specific concepts never appear in this schema.
+model Payment {
+  id                String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  storeId           String        @map("store_id") @db.Uuid
+  orderId           String        @map("order_id") @db.Uuid
+  status            PaymentStatus @default(PENDING)
+  provider          String
+  providerReference String?       @map("provider_reference")
+  amount            BigInt        @db.BigInt
+  currency          String        @db.Char(3)
+  idempotencyKey    String?       @map("idempotency_key")
+  failureCode       String?       @map("failure_code")
+  failureMessage    String?       @map("failure_message")
+  createdAt         DateTime      @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt         DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  store    Store            @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  order    Order            @relation(fields: [storeId, orderId], references: [storeId, id], onDelete: Restrict)
+  attempts PaymentAttempt[]
+  events   PaymentEvent[]
+
+  // CHECK (amount > 0) is added in migration SQL.
+  // Partial uniques (store_id, idempotency_key) WHERE idempotency_key
+  // IS NOT NULL and (provider, provider_reference) WHERE provider_reference
+  // IS NOT NULL are added in migration SQL.
+  @@index([orderId])
+  @@map("payments")
+}
+
+/// An individual attempt to pay an Order (Payment 1:N PaymentAttempt).
+model PaymentAttempt {
+  id                String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  paymentId         String        @map("payment_id") @db.Uuid
+  status            PaymentStatus @default(PENDING)
+  providerReference String?       @map("provider_reference")
+  idempotencyKey    String?       @map("idempotency_key")
+  amount            BigInt        @db.BigInt
+  currency          String        @db.Char(3)
+  failureCode       String?       @map("failure_code")
+  failureMessage    String?       @map("failure_message")
+  initiatedAt       DateTime?     @map("initiated_at") @db.Timestamptz
+  completedAt       DateTime?     @map("completed_at") @db.Timestamptz
+  createdAt         DateTime      @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt         DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  payment Payment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+
+  // CHECK (amount > 0) is added in migration SQL.
+  // Partial unique (payment_id, idempotency_key) WHERE idempotency_key
+  // IS NOT NULL is added in migration SQL.
+  @@index([paymentId])
+  @@map("payment_attempts")
+}
+
+/// Raw provider webhook/event log. A verified provider event is the authority
+/// for payment confirmation. store_id is NULL until the payment is resolved.
+model PaymentEvent {
+  id                String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  storeId           String?               @map("store_id") @db.Uuid
+  paymentId         String?               @map("payment_id") @db.Uuid
+  provider          String
+  providerEventId   String                @map("provider_event_id")
+  eventType         String                @map("event_type")
+  payload           Json
+  signatureVerified Boolean               @default(false) @map("signature_verified")
+  processingStatus  EventProcessingStatus @default(RECEIVED) @map("processing_status")
+  errorMessage      String?               @map("error_message")
+  processedAt       DateTime?             @map("processed_at") @db.Timestamptz
+  createdAt         DateTime              @default(now()) @map("created_at") @db.Timestamptz
+
+  store   Store?   @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  payment Payment? @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+
+  // Webhook dedup unique (provider, provider_event_id).
+  // Partial index (processing_status) WHERE processing_status IN
+  // ('RECEIVED','ERROR') for the retry/reprocessing scan is added in
+  // migration SQL (Prisma cannot express partial indexes).
+  @@unique([provider, providerEventId])
+  @@index([storeId, createdAt])
+  @@map("payment_events")
+}
+
+// ---------------------------------------------------------------------------
+// 6. CMS
+// ---------------------------------------------------------------------------
+
+/// A public Store page (Home, About, Contact, FAQ).
+model Page {
+  id             String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  storeId        String     @map("store_id") @db.Uuid
+  title          String
+  slug           String
+  status         PageStatus @default(DRAFT)
+  seoTitle       String?    @map("seo_title")
+  seoDescription String?    @map("seo_description")
+  createdAt      DateTime   @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  store    Store         @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  sections PageSection[]
+
+  // Composite-FK target (store_id, id) per DATABASE.md section 9.1.
+  @@unique([storeId, id])
+  @@unique([storeId, slug])
+  @@map("pages")
+}
+
+/// Configurable section within a Page.
+model PageSection {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  storeId     String   @map("store_id") @db.Uuid
+  pageId      String   @map("page_id") @db.Uuid
+  sectionType String   @map("section_type")
+  content     Json
+  sortOrder   Int      @default(0) @map("sort_order")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  page  Page  @relation(fields: [storeId, pageId], references: [storeId, id], onDelete: Cascade)
+
+  @@index([pageId])
+  @@map("page_sections")
+}
+
+/// Storefront navigation configuration.
+model Navigation {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  storeId   String   @map("store_id") @db.Uuid
+  name      String
+  items     Json
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Restrict)
+
+  @@map("navigations")
+}
+
+/// Store visual configuration (logo, colors, typography, layout). 1:1 Store.
+model ThemeConfiguration {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  storeId     String   @unique @map("store_id") @db.Uuid
+  logoMediaId String?  @map("logo_media_id") @db.Uuid
+  config      Json
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  store Store  @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  logo  Media? @relation(fields: [logoMediaId], references: [id], onDelete: SetNull)
+
+  @@map("theme_configurations")
+}
+
+// ---------------------------------------------------------------------------
+// 7. MEDIA
+// ---------------------------------------------------------------------------
+
+/// Metadata record for a stored media asset. Binary content lives in
+/// Supabase Storage; this table stores metadata + references only.
+model Media {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  storeId     String    @map("store_id") @db.Uuid
+  storagePath String    @map("storage_path")
+  mediaType   MediaType @map("media_type")
+  mimeType    String?   @map("mime_type")
+  sizeBytes   BigInt?   @map("size_bytes") @db.BigInt
+  altText     String?   @map("alt_text")
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  store               Store                @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  productMedia        ProductMedia[]
+  themeConfigurations ThemeConfiguration[]
+
+  // Composite-FK target (store_id, id) per DATABASE.md section 9.1.
+  // CHECK (size_bytes >= 0) is added in migration SQL.
+  @@unique([storeId, id])
+  @@index([storeId])
+  @@map("media")
+}
+
+/// Association of Media to Products (product images), ordered.
+model ProductMedia {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  storeId   String   @map("store_id") @db.Uuid
+  productId String   @map("product_id") @db.Uuid
+  mediaId   String   @map("media_id") @db.Uuid
+  variantId String?  @map("variant_id") @db.Uuid
+  altText   String?  @map("alt_text")
+  sortOrder Int      @default(0) @map("sort_order")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  store   Store           @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  product Product         @relation(fields: [storeId, productId], references: [storeId, id], onDelete: Cascade)
+  media   Media           @relation(fields: [storeId, mediaId], references: [storeId, id], onDelete: Restrict)
+  variant ProductVariant? @relation(fields: [variantId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, mediaId])
+  @@index([productId])
+  @@map("product_media")
+}
+
+// ---------------------------------------------------------------------------
+// 8. STORE CONFIGURATION (supporting/technical) + AUDIT
+// ---------------------------------------------------------------------------
+
+/// Store-level operational configuration (supporting/technical table).
+/// Critical business data (prices, inventory, orders, statuses) is NEVER
+/// hidden inside this JSONB.
+model StoreSettings {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  storeId   String   @unique @map("store_id") @db.Uuid
+  settings  Json
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Restrict)
+
+  @@map("store_settings")
+}
+
+/// Immutable record of auditable administrative actions (append-only).
+model AuditLog {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  storeId    String   @map("store_id") @db.Uuid
+  userId     String?  @map("user_id") @db.Uuid
+  action     String
+  entityType String   @map("entity_type")
+  entityId   String?  @map("entity_id") @db.Uuid
+  metadata   Json?
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  user  User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([storeId, createdAt])
+  @@map("audit_logs")
 }

@@ -8,6 +8,8 @@ import {
 } from '@nestjs/common';
 import { HttpAdapterHost } from '@nestjs/core';
 import type { Request, Response } from 'express';
+import { REQUEST_ID_HEADER } from '../context/request-context.constants';
+import { DomainError } from '../errors/domain.error';
 
 interface ErrorResponseBody {
   error: {
@@ -23,9 +25,14 @@ interface ErrorResponseBody {
  *
  *   { "error": { "code": "...", "message": "...", "details": { ... } } }
  *
+ * Priority:
+ * 1. DomainError (typed application errors) -> uses its explicit code.
+ * 2. HttpException (Nest built-ins, ValidationPipe) -> status-derived code.
+ * 3. Anything else -> INTERNAL_SERVER_ERROR.
+ *
  * Unknown/internal errors are logged server-side and replaced with a generic
  * message so stack traces, credentials and infrastructure details never leak
- * to the client.
+ * to the client. Log lines are enriched with the request correlation ID.
  */
 @Catch()
 export class AllExceptionsFilter implements ExceptionFilter {
@@ -39,6 +46,11 @@ export class AllExceptionsFilter implements ExceptionFilter {
     const request = ctx.getRequest<Request>();
     const response = ctx.getResponse<Response>();
 
+    if (exception instanceof DomainError) {
+      this.handleDomainError(exception, request, response);
+      return;
+    }
+
     if (exception instanceof HttpException) {
       this.handleHttpException(exception, request, response);
       return;
@@ -48,7 +60,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
     const message = exception instanceof Error ? exception.message : 'Non-Error exception thrown';
     const stack = exception instanceof Error ? exception.stack : undefined;
     this.logger.error(
-      `Unhandled exception on ${request.method} ${request.originalUrl}: ${message}`,
+      `[${this.requestId(request)}] Unhandled exception on ${request.method} ${request.originalUrl}: ${message}`,
       stack,
     );
 
@@ -59,6 +71,25 @@ export class AllExceptionsFilter implements ExceptionFilter {
       },
     };
     httpAdapter.reply(response, body, HttpStatus.INTERNAL_SERVER_ERROR);
+  }
+
+  private handleDomainError(exception: DomainError, request: Request, response: Response): void {
+    const { httpAdapter } = this.httpAdapterHost;
+    const status = exception.getStatus();
+
+    const body: ErrorResponseBody = {
+      error: {
+        code: exception.code,
+        message: exception.message,
+        ...(exception.details !== undefined ? { details: exception.details } : {}),
+      },
+    };
+
+    this.logger.warn(
+      `[${this.requestId(request)}] Request ${request.method} ${request.originalUrl} failed with code ${exception.code} (${status})`,
+    );
+
+    httpAdapter.reply(response, body, status);
   }
 
   private handleHttpException(
@@ -98,7 +129,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
     };
 
     this.logger.warn(
-      `Request ${request.method} ${request.originalUrl} failed with status ${status}`,
+      `[${this.requestId(request)}] Request ${request.method} ${request.originalUrl} failed with status ${status}`,
     );
 
     httpAdapter.reply(response, body, status);
@@ -119,5 +150,14 @@ export class AllExceptionsFilter implements ExceptionFilter {
       default:
         return status >= 500 ? 'INTERNAL_SERVER_ERROR' : 'BAD_REQUEST';
     }
+  }
+
+  private requestId(request: Request): string {
+    const direct = request.requestId;
+    if (direct) {
+      return direct;
+    }
+    const header = request.headers?.[REQUEST_ID_HEADER];
+    return typeof header === 'string' ? header : '-';
   }
 }

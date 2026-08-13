@@ -1,0 +1,68 @@
+import { Readable } from 'node:stream';
+import type { Request } from 'express';
+import { CreateMediaQueryDto } from '../dto/create-media-query.dto';
+import { MediaController } from './media.controller';
+import { MediaService } from '../services/media.service';
+
+describe('MediaController', () => {
+  let media: { createUpload: jest.Mock; getMedia: jest.Mock; deleteMedia: jest.Mock };
+  let controller: MediaController;
+
+  beforeEach(() => {
+    media = {
+      createUpload: jest.fn().mockResolvedValue({ id: 'media-1' }),
+      getMedia: jest.fn().mockResolvedValue({ id: 'media-1' }),
+      deleteMedia: jest.fn().mockResolvedValue(undefined),
+    };
+    controller = new MediaController(media as unknown as MediaService);
+  });
+
+  function binaryRequest(contentType?: string): Request {
+    const stream = Readable.from([Buffer.from('PNGDATA')]);
+    const request = stream as unknown as { headers: Record<string, string | undefined> } & Request;
+    request.headers = { 'content-type': contentType };
+    return request as Request;
+  }
+
+  describe('POST /media', () => {
+    it('forwards the raw body, Content-Type and altText to the service', async () => {
+      const query = new CreateMediaQueryDto();
+      query.altText = 'My logo';
+
+      const result = await controller.create(binaryRequest('image/png'), query);
+
+      expect(media.createUpload).toHaveBeenCalledWith({
+        data: Buffer.from('PNGDATA'),
+        contentType: 'image/png',
+        altText: 'My logo',
+      });
+      expect(result).toEqual({ data: { id: 'media-1' } });
+    });
+
+    it('passes an undefined Content-Type through (service rejects it)', async () => {
+      const query = new CreateMediaQueryDto();
+      await controller.create(binaryRequest(undefined), query);
+      expect(media.createUpload).toHaveBeenCalledWith({
+        data: Buffer.from('PNGDATA'),
+        contentType: undefined,
+        altText: undefined,
+      });
+    });
+  });
+
+  describe('GET /media/:mediaId', () => {
+    it('delegates to the service and wraps the result in the data envelope', async () => {
+      const result = await controller.get('media-1');
+      expect(media.getMedia).toHaveBeenCalledWith('media-1');
+      expect(result).toEqual({ data: { id: 'media-1' } });
+    });
+  });
+
+  describe('DELETE /media/:mediaId', () => {
+    it('delegates to the service (204 is set via @HttpCode decorator)', async () => {
+      const result = await controller.remove('media-1');
+      expect(media.deleteMedia).toHaveBeenCalledWith('media-1');
+      expect(result).toBeUndefined();
+    });
+  });
+});

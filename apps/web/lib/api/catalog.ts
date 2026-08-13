@@ -1,0 +1,78 @@
+import { api, toQueryString } from './client';
+import type {
+  CategoryView,
+  CreateCategoryInput,
+  CreateProductInput,
+  CreateVariantInput,
+  Envelope,
+  ListCategoriesParams,
+  ListProductsParams,
+  Paginated,
+  ProductLinkInput,
+  ProductView,
+  UpdateCategoryInput,
+  UpdateProductInput,
+  UpdateVariantInput,
+  VariantView,
+} from './types';
+
+/**
+ * Catalog API calls — every function hits the real backend
+ * (NEXT_PUBLIC_API_URL) with the authenticated session's access token.
+ */
+export const catalogApi = {
+  // --- Products ---
+  listProducts: (params: ListProductsParams = {}) =>
+    api.get<Paginated<ProductView>>(`/products${toQueryString({ ...params })}`),
+
+  getProduct: (productId: string) => api.get<Envelope<ProductView>>(`/products/${productId}`),
+
+  createProduct: (input: CreateProductInput) => api.post<Envelope<ProductView>>('/products', input),
+
+  updateProduct: (productId: string, input: UpdateProductInput) =>
+    api.patch<Envelope<ProductView>>(`/products/${productId}`, input),
+
+  publishProduct: (productId: string) =>
+    api.post<Envelope<ProductView>>(`/products/${productId}/publish`),
+
+  unpublishProduct: (productId: string) =>
+    api.post<Envelope<ProductView>>(`/products/${productId}/unpublish`),
+
+  archiveProduct: (productId: string) =>
+    api.post<Envelope<ProductView>>(`/products/${productId}/archive`),
+
+  // --- Variants ---
+  createVariant: (productId: string, input: CreateVariantInput) =>
+    api.post<Envelope<VariantView>>(`/products/${productId}/variants`, input),
+
+  updateVariant: (variantId: string, input: UpdateVariantInput) =>
+    api.patch<Envelope<VariantView>>(`/variants/${variantId}`, input),
+
+  archiveVariant: (variantId: string) =>
+    api.post<Envelope<VariantView>>(`/variants/${variantId}/archive`),
+
+  // --- Product <-> Category links ---
+  listProductCategories: (productId: string) =>
+    api.get<Envelope<CategoryView[]>>(`/products/${productId}/categories`),
+
+  assignCategory: (productId: string, categoryId: string) =>
+    api.post<Envelope<ProductLinkInput>>(`/products/${productId}/categories/${categoryId}`),
+
+  removeCategory: (productId: string, categoryId: string) =>
+    api.delete<Envelope<ProductLinkInput>>(`/products/${productId}/categories/${categoryId}`),
+
+  // --- Categories ---
+  listCategories: (params: ListCategoriesParams = {}) =>
+    api.get<Paginated<CategoryView>>(`/categories${toQueryString({ ...params })}`),
+
+  getCategory: (categoryId: string) => api.get<Envelope<CategoryView>>(`/categories/${categoryId}`),
+
+  createCategory: (input: CreateCategoryInput) =>
+    api.post<Envelope<CategoryView>>('/categories', input),
+
+  updateCategory: (categoryId: string, input: UpdateCategoryInput) =>
+    api.patch<Envelope<CategoryView>>(`/categories/${categoryId}`, input),
+
+  archiveCategory: (categoryId: string) =>
+    api.post<Envelope<CategoryView>>(`/categories/${categoryId}/archive`),
+};
