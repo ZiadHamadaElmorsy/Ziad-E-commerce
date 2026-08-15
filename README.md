@@ -44,7 +44,8 @@ queues, search infrastructure, sharding, or multi-region infrastructure.
 npm install
 ```
 
-Installation also runs `prisma generate` (via the root `postinstall` script).
+Installation also runs `prisma generate` — via the `@ziad/api` workspace `postinstall`
+script (backend-only; the web workspace does not trigger Prisma generation).
 
 ## Environment setup
 

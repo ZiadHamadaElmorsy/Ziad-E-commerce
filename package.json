@@ -24,8 +24,7 @@
     "db:validate": "cross-env DATABASE_URL=postgresql://postgres:postgres@localhost:5432/ziad_dev prisma validate --schema apps/api/prisma/schema.prisma",
     "db:generate": "prisma generate --schema apps/api/prisma/schema.prisma",
     "db:migrate": "prisma migrate dev --schema apps/api/prisma/schema.prisma",
-    "db:deploy": "prisma migrate deploy --schema apps/api/prisma/schema.prisma",
-    "postinstall": "npm run db:generate"
+    "db:deploy": "prisma migrate deploy --schema apps/api/prisma/schema.prisma"
   },
   "devDependencies": {
     "cross-env": "^10.1.0",
