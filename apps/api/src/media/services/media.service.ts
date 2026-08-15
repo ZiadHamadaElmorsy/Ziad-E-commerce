@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { requireStoreId } from '../../catalog/domain/catalog-tenant';
 import { RequestContextService } from '../../common/context/request-context.service';
 import {
@@ -10,7 +11,15 @@ import { TransactionService } from '../../infrastructure/database/transaction.se
 import { toMediaView, MediaView } from '../media.types';
 import { mapMediaWriteError } from '../domain/media-error.mapper';
 import { buildStorageKey, generateMediaId } from '../domain/media-storage-keys';
-import { deriveMediaType, isUsableMimeType, normalizeMimeType } from '../domain/media-type';
+import {
+  DEFAULT_ALLOWED_IMAGE_MIME_TYPES,
+  deriveMediaType,
+  isAllowedMediaMime,
+  isUsableMimeType,
+  normalizeMimeType,
+  sniffImageMimeType,
+} from '../domain/media-type';
+import { UploadTooLargeError } from '../domain/read-raw-body';
 import { MediaRepository } from '../repositories/media.repository';
 import { StorageProvider } from '../storage/storage-provider';
 
@@ -59,6 +68,7 @@ export class MediaService {
     private readonly media: MediaRepository,
     private readonly transaction: TransactionService,
     private readonly storage: StorageProvider,
+    private readonly config: ConfigService,
   ) {}
 
   /** POST /api/v1/media — stores the binary and creates the metadata record. */
@@ -158,6 +168,55 @@ export class MediaService {
     if (!input.data || input.data.length === 0) {
       throw new ValidationError('The media file body cannot be empty.');
     }
-    return normalizeMimeType(input.contentType);
+
+    const mimeType = normalizeMimeType(input.contentType);
+
+    // Phase 21 — strict allowlist (MEDIA_ALLOWED_MIME_TYPES). The storefront
+    // requires images only; unsupported types are rejected instead of being
+    // stored as generic FILE rows.
+    const allowed = this.allowedMimeTypes();
+    if (!isAllowedMediaMime(mimeType, allowed)) {
+      throw new ValidationError(
+        `Unsupported media type "${mimeType}". Allowed types: ${allowed.join(', ')}.`,
+      );
+    }
+
+    // Phase 21 — size cap (MEDIA_MAX_UPLOAD_BYTES).
+    if (input.data.length > this.maxUploadBytes()) {
+      throw new ValidationError(
+        `The media file exceeds the maximum allowed size of ${this.maxUploadBytes()} bytes.`,
+      );
+    }
+
+    // Phase 21 — content/type consistency via magic bytes: never trust the
+    // Content-Type header alone (a renamed executable must be rejected).
+    const sniffed = sniffImageMimeType(input.data);
+    if (!sniffed || sniffed !== mimeType) {
+      throw new ValidationError('The media file content does not match its declared type.');
+    }
+
+    return mimeType;
   }
+
+  /** Configured maximum upload size in bytes (MEDIA_MAX_UPLOAD_BYTES). */
+  private maxUploadBytes(): number {
+    const value = this.config.get<number>('media.maxUploadBytes');
+    return Number.isInteger(value) && (value as number) > 0
+      ? (value as number)
+      : 10 * 1024 * 1024;
+  }
+
+  /** Configured MIME allowlist (MEDIA_ALLOWED_MIME_TYPES). */
+  private allowedMimeTypes(): string[] {
+    const value = this.config.get<string[]>('media.allowedMimeTypes');
+    return Array.isArray(value) && value.length > 0 ? value : DEFAULT_ALLOWED_IMAGE_MIME_TYPES;
+  }
+}
+
+/** Maps a raw-body size-cap error to the API's validation error. */
+export function mapUploadTooLargeError(error: unknown): unknown {
+  if (error instanceof UploadTooLargeError) {
+    return new ValidationError(error.message);
+  }
+  return error;
 }

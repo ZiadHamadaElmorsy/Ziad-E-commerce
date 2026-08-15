@@ -7,6 +7,8 @@ import { StorefrontService } from './storefront.service';
 
 describe('StorefrontService', () => {
   let storeResolver: { resolve: jest.Mock };
+  let settings: { readWhatsAppSettings: jest.Mock };
+  let config: { get: jest.Mock };
   let storefrontRepository: {
     findStoreBySlug: jest.Mock;
     findActiveProducts: jest.Mock;
@@ -58,6 +60,8 @@ describe('StorefrontService', () => {
 
   beforeEach(() => {
     storeResolver = { resolve: jest.fn() };
+    settings = { readWhatsAppSettings: jest.fn() };
+    config = { get: jest.fn() };
     storefrontRepository = {
       findStoreBySlug: jest.fn(),
       findActiveProducts: jest.fn(),
@@ -73,11 +77,20 @@ describe('StorefrontService', () => {
     service = new StorefrontService(
       storeResolver as unknown as StorefrontStoreResolver,
       storefrontRepository as unknown as StorefrontRepository,
+      settings as never,
+      config as never,
     );
     storeResolver.resolve.mockResolvedValue(resolvedStore);
   });
 
-  it('getStore returns the public store configuration', async () => {
+  it('getStore returns the public store configuration + payment methods', async () => {
+    settings.readWhatsAppSettings.mockResolvedValue({
+      enabled: true,
+      phoneNumber: '201012345678',
+      label: null,
+    });
+    config.get.mockReturnValue({ apiKey: 'k', integrationId: 'i', publicKey: 'p' });
+
     await expect(service.getStore({ headers: {} })).resolves.toEqual({
       id: 'store-1',
       name: 'My Store',
@@ -85,6 +98,10 @@ describe('StorefrontService', () => {
       description: null,
       currency: 'EGP',
       timezone: 'Africa/Cairo',
+      payments: {
+        payOnline: true,
+        whatsapp: { enabled: true, phoneNumber: '201012345678', label: null },
+      },
     });
   });
 

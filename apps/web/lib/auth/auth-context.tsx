@@ -9,8 +9,8 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { api } from '@/lib/api/client';
-import type { MeMembership, MeResponse, MeStore, MeUser } from '@/lib/api/types';
+import { api, ApiError } from '@/lib/api/client';
+import type { MeMembership, MeResponse, MeStore, MeUser, OnboardingStatus } from '@/lib/api/types';
 import { getSupabaseBrowserClient } from '@/lib/supabase/client';
 
 export type AuthStatus = 'loading' | 'authenticated' | 'unauthenticated';
@@ -42,7 +42,7 @@ interface AuthenticatedState {
   user: MeUser | null;
   store: MeStore | null;
   membership: MeMembership | null;
-  me: MeResponse;
+  me: MeResponse | null;
 }
 
 interface LoadingState {
@@ -89,16 +89,87 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         me,
         error: null,
       });
-    } catch {
-      // The session/token is not valid on the backend -> end the session.
-      setState({
-        status: 'unauthenticated',
-        user: null,
-        store: null,
-        membership: null,
-        me: null,
-        error: null,
-      });
+    } catch (caught) {
+      // A signed-in user without an ACTIVE membership cannot resolve a tenant
+      // through /auth/me (the global tenant guard fails closed). That is NOT a
+      // lost session — a fresh merchant who has not created a store yet (or a
+      // multi-store merchant without a selection) is still authenticated.
+      const isTenantless =
+        caught instanceof ApiError &&
+        (caught.code === 'FORBIDDEN' || caught.code === 'TENANT_CONTEXT_REQUIRED');
+
+      if (!isTenantless) {
+        setState({
+          status: 'unauthenticated',
+          user: null,
+          store: null,
+          membership: null,
+          me: null,
+          error: null,
+        });
+        return;
+      }
+
+      try {
+        const envelope = await api.get<{ data: OnboardingStatus }>('/onboarding/status');
+        const status = envelope.data;
+        if (status.store && status.membership) {
+          // The merchant already owns a store (e.g. multi-store without a
+          // selection). The store is server-resolved from the membership row.
+          setState({
+            status: 'authenticated',
+            user: status.user
+              ? { authUserId: status.user.authUserId, email: status.user.email }
+              : null,
+            store: {
+              id: status.store.id,
+              slug: status.store.slug,
+              name: status.store.name,
+              status: status.store.status,
+            },
+            membership: status.membership,
+            me: {
+              requestId: '',
+              user: status.user
+                ? { authUserId: status.user.authUserId, email: status.user.email }
+                : null,
+              store: {
+                id: status.store.id,
+                slug: status.store.slug,
+                name: status.store.name,
+                status: status.store.status,
+              },
+              membership: status.membership,
+            },
+            error: null,
+          });
+        } else {
+          // Authenticated but has no store yet -> the onboarding flow. The
+          // identity comes from the trusted Supabase session, never from React.
+          const supabase = getSupabaseBrowserClient();
+          const session = (await supabase.auth.getSession()).data.session;
+          setState({
+            status: 'authenticated',
+            user: session
+              ? { authUserId: session.user.id, email: session.user.email ?? '' }
+              : null,
+            store: null,
+            membership: null,
+            me: null,
+            error: null,
+          });
+        }
+      } catch {
+        // The fallback also failed — treat it as an invalid session.
+        setState({
+          status: 'unauthenticated',
+          user: null,
+          store: null,
+          membership: null,
+          me: null,
+          error: null,
+        });
+      }
     }
   }, []);
 

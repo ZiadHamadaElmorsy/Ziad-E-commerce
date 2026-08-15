@@ -41,4 +41,27 @@ describe('HealthService', () => {
     expect(result.status).toBe('ok');
     expect(result.checks.database).toBe('down');
   });
+
+  it('live() returns ok without any dependency I/O', () => {
+    const result = service.live();
+
+    expect(result.status).toBe('ok');
+    expect(result.service).toBe('ziad-api');
+    expect(prisma.$queryRaw).not.toHaveBeenCalled();
+  });
+
+  it('ready() resolves when the database responds', async () => {
+    prisma.$queryRaw.mockResolvedValue([{ '?column?': 1 }]);
+
+    const result = await service.ready();
+
+    expect(result.status).toBe('ok');
+    expect(result.checks.database).toBe('up');
+  });
+
+  it('ready() throws 503 when the database is unreachable', async () => {
+    prisma.$queryRaw.mockRejectedValue(new Error('connection refused'));
+
+    await expect(service.ready()).rejects.toMatchObject({ status: 503 });
+  });
 });

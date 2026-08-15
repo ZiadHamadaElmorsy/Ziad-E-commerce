@@ -16,6 +16,13 @@ export default defineConfig({
   workers: 1,
   retries: 0,
   reporter: [['list'], ['html', { open: 'never' }]],
+  expect: {
+    // The hosted Supabase database (transaction pooler) adds ~1–3s per write
+    // round-trip, so the Playwright default of 5s is too tight for
+    // mutation-to-toast assertions (e.g. publish/archive). 15s keeps the
+    // suite reliable on real infrastructure without masking genuine failures.
+    timeout: 15_000,
+  },
   use: {
     baseURL: 'http://localhost:3000',
     trace: 'retain-on-failure',

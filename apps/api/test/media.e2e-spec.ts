@@ -379,6 +379,12 @@ describe('Media (e2e)', () => {
     return req.set('Authorization', 'Bearer valid-token');
   }
 
+  /** Minimal valid PNG bytes (magic + padding) for content/type consistency. */
+  function pngBytes(size = 64): Buffer {
+    const magic = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    return Buffer.concat([magic, Buffer.alloc(Math.max(4, size - magic.length))]);
+  }
+
   describe('authentication', () => {
     it('rejects unauthenticated requests with 401 on every media route', async () => {
       await request(app.getHttpServer()).post('/api/v1/media').send(Buffer.from('x')).expect(401);
@@ -402,18 +408,19 @@ describe('Media (e2e)', () => {
   describe('create / upload (POST /media)', () => {
     it('uploads a raw binary image: returns the metadata + storage reference and stores the object', async () => {
       const mediaCount = db.media.length;
+      const body = pngBytes();
 
       const res = await request(app.getHttpServer())
         .post('/api/v1/media?altText=Front%20view')
         .set('Authorization', 'Bearer valid-token')
         .set('Content-Type', 'image/png')
-        .send(Buffer.from('PNGDATA'))
+        .send(body)
         .expect(201);
 
       expect(res.body.data).toMatchObject({
         mediaType: 'IMAGE',
         mimeType: 'image/png',
-        sizeBytes: 7,
+        sizeBytes: body.length,
         altText: 'Front view',
       });
       // Tenant-prefixed storage reference: {store_id}/{media_id}.
@@ -421,7 +428,7 @@ describe('Media (e2e)', () => {
       expect(storagePath).toMatch(/^store-1\/[0-9a-f-]{36}$/);
 
       // The binary is actually stored at the reference path (in-memory provider).
-      expect(objects.get(storagePath)?.equals(Buffer.from('PNGDATA'))).toBe(true);
+      expect(objects.get(storagePath)?.equals(body)).toBe(true);
 
       // The metadata row was created.
       expect(db.media).toHaveLength(mediaCount + 1);
@@ -435,22 +442,40 @@ describe('Media (e2e)', () => {
       expect(serialized).not.toContain('createdAt');
     });
 
-    it('classifies video/* uploads as VIDEO', async () => {
-      const res = await authRequest('post', '/media')
+    it('rejects unsupported MIME types (strict image allowlist, Phase 21)', async () => {
+      // Video and generic files are no longer stored as VIDEO/FILE rows.
+      const video = await authRequest('post', '/media')
         .set('Content-Type', 'video/mp4')
         .send(Buffer.from('MP4DATA'))
-        .expect(201);
+        .expect(400);
+      expect(video.body.error.code).toBe('VALIDATION_ERROR');
 
-      expect(res.body.data.mediaType).toBe('VIDEO');
-    });
-
-    it('classifies non-image/video uploads (e.g. application/pdf) as FILE', async () => {
-      const res = await authRequest('post', '/media')
+      const pdf = await authRequest('post', '/media')
         .set('Content-Type', 'application/pdf')
         .send(Buffer.from('%PDF-1.4'))
-        .expect(201);
+        .expect(400);
+      expect(pdf.body.error.code).toBe('VALIDATION_ERROR');
+    });
 
-      expect(res.body.data.mediaType).toBe('FILE');
+    it('rejects content that does not match its declared MIME type (magic bytes, Phase 21)', async () => {
+      const res = await authRequest('post', '/media')
+        .set('Content-Type', 'image/png')
+        .send(Buffer.from('this is definitely not an image'))
+        .expect(400);
+
+      expect(res.body.error.code).toBe('VALIDATION_ERROR');
+    });
+
+    it('rejects an upload larger than the configured maximum (Phase 21)', async () => {
+      // env.e2e.ts does not set MEDIA_MAX_UPLOAD_BYTES, so the default (10 MB)
+      // applies; upload a payload beyond it to prove the stream cap.
+      const oversized = Buffer.alloc(10 * 1024 * 1024 + 1, 0x89);
+      const res = await authRequest('post', '/media')
+        .set('Content-Type', 'image/png')
+        .send(oversized)
+        .expect(400);
+
+      expect(res.body.error.code).toBe('VALIDATION_ERROR');
     });
 
     it('rejects an empty binary body (400 VALIDATION_ERROR)', async () => {
@@ -556,7 +581,7 @@ describe('Media (e2e)', () => {
         .post('/api/v1/media')
         .set('Authorization', 'Bearer valid-token')
         .set('Content-Type', 'image/png')
-        .send(Buffer.from('LOGO'))
+        .send(pngBytes())
         .expect(201);
       const mediaId = upload.body.data.id as string;
       const storagePath = upload.body.data.storagePath as string;

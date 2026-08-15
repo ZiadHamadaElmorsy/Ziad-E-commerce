@@ -65,6 +65,29 @@ export class SupabaseStorageProvider implements StorageProvider {
     }
   }
 
+  async downloadObject(key: string): Promise<Buffer> {
+    const config = this.resolveConfig();
+
+    let response: Response;
+    try {
+      response = await fetch(this.objectUrl(config, key), {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${config.serviceRoleKey}` },
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(`Supabase Storage download request failed: ${message}`);
+      throw new StorageError('The media file could not be retrieved.');
+    }
+
+    if (!response.ok) {
+      this.logger.warn(`Supabase Storage download failed with status ${response.status}.`);
+      throw new StorageError('The media file could not be retrieved.');
+    }
+
+    return Buffer.from(await response.arrayBuffer());
+  }
+
   async deleteObject(key: string): Promise<void> {
     const config = this.resolveConfig();
 

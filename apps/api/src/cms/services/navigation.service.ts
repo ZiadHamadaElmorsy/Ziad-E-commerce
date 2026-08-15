@@ -45,18 +45,24 @@ export class NavigationService {
     private readonly audit: CmsAuditService,
   ) {}
 
-  /** GET /api/v1/navigation — the store's navigation (default when absent). */
-  async getNavigation(): Promise<NavigationView> {
-    const storeId = requireStoreId(this.requestContext);
+  /**
+   * GET /api/v1/navigation — the store's navigation (default when absent).
+   *
+   * `storeId` is optional: the merchant path resolves it from the trusted
+   * tenant context; the public storefront path passes the store resolved
+   * SERVER-SIDE by the StorefrontStoreResolver (never client input).
+   */
+  async getNavigation(storeId?: string): Promise<NavigationView> {
+    const resolvedStoreId = storeId ?? requireStoreId(this.requestContext);
 
-    const existing = await this.navigations.findForStore(storeId);
+    const existing = await this.navigations.findForStore(resolvedStoreId);
     if (existing) {
       return toNavigationView(existing);
     }
 
-    const created = await this.transaction.runWithTenant(storeId, (tx) =>
+    const created = await this.transaction.runWithTenant(resolvedStoreId, (tx) =>
       this.navigations.create(tx, {
-        storeId,
+        storeId: resolvedStoreId,
         name: DEFAULT_NAVIGATION_NAME,
         items: [],
       }),

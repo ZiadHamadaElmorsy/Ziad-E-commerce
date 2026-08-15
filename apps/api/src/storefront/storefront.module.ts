@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { StoreSettingsModule } from '../store-settings/store-settings.module';
 import { SubscriptionModule } from '../subscription/subscription.module';
 import { StorefrontController } from './controllers/storefront.controller';
 import { StorefrontRepository } from './repositories/storefront.repository';
@@ -21,8 +22,14 @@ import { StorefrontStoreResolver } from './services/storefront-store-resolver';
  * Controller -> Service -> Repository -> Database.
  */
 @Module({
-  imports: [SubscriptionModule],
+  imports: [SubscriptionModule, StoreSettingsModule],
   controllers: [StorefrontController],
   providers: [StorefrontService, StorefrontStoreResolver, StorefrontRepository],
+  // StorefrontStoreResolver + StorefrontRepository are exported for the
+  // storefront commerce surface (Phase 19): public guest cart/checkout/payment
+  // and theme/navigation/media endpoints resolve the Store with the SAME
+  // trusted server-side mechanism (X-Storefront-Slug header + Host subdomain)
+  // — a client-supplied store id is never an authorization source.
+  exports: [StorefrontService, StorefrontStoreResolver, StorefrontRepository],
 })
 export class StorefrontModule {}

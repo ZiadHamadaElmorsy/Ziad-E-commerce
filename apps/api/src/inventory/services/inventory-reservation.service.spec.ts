@@ -468,6 +468,29 @@ describe('InventoryReservationService', () => {
 
       await expect(service.expireDueReservations(0)).rejects.toBeInstanceOf(ValidationError);
     });
+
+    it('expireDueReservationsForStore runs without a tenant context (Phase 21 job path)', async () => {
+      reservations.findDueForExpiration.mockResolvedValue([dueReservation]);
+      reservations.transitionStatus.mockResolvedValue({ count: 1 });
+      inventory.guardedRelease.mockResolvedValue({ count: 1 });
+      inventory.findByVariantTx.mockResolvedValue({ ...inventoryRow, reservedQuantity: 0 });
+
+      const result = await service.expireDueReservationsForStore('store-42', 50);
+
+      expect(reservations.findDueForExpiration).toHaveBeenCalledWith(
+        'store-42',
+        expect.any(Date),
+        50,
+      );
+      expect(result).toEqual({ scanned: 1, released: 1 });
+      expect(movements.create).toHaveBeenCalledTimes(1);
+    });
+
+    it('expireDueReservationsForStore validates the batch size', async () => {
+      await expect(service.expireDueReservationsForStore('store-42', 0)).rejects.toBeInstanceOf(
+        ValidationError,
+      );
+    });
   });
 
   describe('consumeAllForOrderTx (payment success — Payments phase)', () => {

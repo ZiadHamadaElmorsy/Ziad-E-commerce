@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { Order, OrderStatus, Prisma } from '@prisma/client';
+import { Order, OrderChannel, OrderStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { OrderWithDetails, OrderWithItems } from '../checkout.types';
 
@@ -79,6 +79,8 @@ export class OrderRepository {
 export interface CreateOrderInput {
   storeId: string;
   orderNumber: string;
+  /** Order acquisition/payment channel (Phase 22 — default ONLINE_PAYMENT). */
+  channel: OrderChannel;
   customerId: string | null;
   status: OrderStatus;
   currency: string;
@@ -93,6 +95,8 @@ export interface CreateOrderInput {
   /** JSONB is nullable — pass Prisma.DbNull for SQL NULL. */
   billingAddressSnapshot: Prisma.InputJsonValue | Prisma.NullableJsonNullValueInput;
   idempotencyKey: string | null;
+  /** Phase 23 — per-order secure lookup token (see order-lookup-token.ts). */
+  lookupToken: string | null;
 }
 
 /** Write input for an OrderItem snapshot row (docs/DATABASE.md §7.17). */

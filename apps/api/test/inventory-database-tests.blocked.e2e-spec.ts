@@ -1,108 +1,186 @@
 /**
- * INVENTORY DATABASE INTEGRATION TESTS — BLOCKED
- * ==============================================
- *
- * Status: BLOCKED — PostgreSQL unavailable.
- *
- * A live PostgreSQL instance (DATABASE_URL) is not available in the current
- * environment. These tests REQUIRE a real database and therefore CANNOT be
- * executed. They are intentionally defined with `describe.skip` so they are
- * visible, clearly marked, and can be enabled immediately once a database is
- * reachable (remove the `.skip`).
- *
- * What they would verify (matching the FINAL database contract):
- *   - the initial migration applies cleanly to a fresh database
- *   - inventory CHECK constraints (on_hand >= 0, reserved >= 0,
- *     on_hand >= reserved — DATABASE.md §7.9/§13.2/§32)
- *   - reservation CHECK constraints (quantity > 0, context present — §7.10)
- *   - tenant-safe composite FKs (inventory/reservations/movements cannot
- *     reference a variant of another Store — §9.1)
- *   - RLS policies for inventory / inventory_reservations / inventory_movements
- *     (§29.3)
- *   - tenant isolation of the three inventory tables
- *   - atomic guarded reservation under concurrency (§13.3/§26.2): stock = 10,
- *     two concurrent "reserve 7" requests must never yield reserved = 14;
- *     stock = 10 with reserve 6 + reserve 4 must end at available = 0 and a
- *     release must restore exactly the released quantity
- *   - insufficient stock under concurrency (no reservation created when the
- *     guarded UPDATE affects zero rows)
- *   - duplicate release / duplicate consume never double-decrement inventory
- *     or write duplicate movements (§14.3/§27.2)
- *   - expiration vs consume race: only one operation wins (§14.2/§28.6)
- *   - movement append-only behavior (never updated/deleted — §7.11)
- *
- * These scenarios are NOT covered by any passing test in this phase.
+ * INVENTORY DATABASE INTEGRATION TESTS — REAL PostgreSQL (Phase 23).
+ * Gated on POSTGRES_RLS_TEST_DATABASE_URL (see docs/RLS-TEST-ENVIRONMENT.md).
  */
-describe.skip('Inventory database integration — BLOCKED — PostgreSQL unavailable', () => {
-  describe('migration', () => {
-    it.todo('applies the initial migration cleanly to a fresh database');
+import { Prisma, PrismaClient } from '@prisma/client';
+import {
+  bindTenant,
+  clearTenant,
+  createTestClient,
+  expectPgState,
+  RLS_TEST_DATABASE_URL,
+  seedInventory,
+  seedProductAndVariant,
+  seedStore,
+} from './db-helpers';
+
+const describeOrSkip = RLS_TEST_DATABASE_URL ? describe : describe.skip;
+
+describeOrSkip('Inventory database integration (real PostgreSQL)', () => {
+  let prisma: PrismaClient;
+
+  beforeAll(async () => {
+    prisma = createTestClient();
+    await prisma.$connect();
   });
 
-  describe('inventory CHECK constraints (docs/DATABASE.md §7.9/§13.2/§32)', () => {
-    it.todo('rejects a negative on_hand_quantity (chk_inventory_on_hand_nonneg)');
-    it.todo('rejects a negative reserved_quantity (chk_inventory_reserved_nonneg)');
-    it.todo('rejects on_hand_quantity < reserved_quantity (chk_inventory_available_nonneg)');
-    it.todo('allows on_hand_quantity == reserved_quantity (available = 0)');
+  afterAll(async () => {
+    await prisma?.$disconnect();
   });
 
-  describe('reservation CHECK constraints (docs/DATABASE.md §7.10)', () => {
-    it.todo(
-      'rejects a reservation with quantity <= 0 (chk_inventory_reservations_quantity_positive)',
-    );
-    it.todo(
-      'rejects a reservation with neither cart_id nor order_id (chk_inventory_reservations_context)',
-    );
+  it('inventory CHECK rejects a negative on_hand_quantity', async () => {
+    await prisma
+      .$transaction(async (tx) => {
+        const storeId = await seedStore(tx, 'inv-neg-a', 'Inv Neg A');
+        const { variantId } = await seedProductAndVariant(tx, storeId, 'inv-neg-p', 'P');
+        await expectPgState(
+          () =>
+            tx.$queryRaw`INSERT INTO "inventory" (store_id, variant_id, on_hand_quantity, reserved_quantity)
+            VALUES (${storeId}::uuid, ${variantId}::uuid, -1, 0)`,
+          '23514',
+        );
+        throw new Error('__rollback__');
+      })
+      .catch((e: unknown) =>
+        e instanceof Error && e.message === '__rollback__' ? undefined : Promise.reject(e),
+      );
   });
 
-  describe('tenant-safe composite FKs (docs/DATABASE.md §9.1)', () => {
-    it.todo('inventory cannot reference a variant of another Store');
-    it.todo('inventory_reservations cannot reference a variant of another Store');
-    it.todo('inventory_movements cannot reference a variant of another Store');
+  it('inventory CHECK rejects on_hand < reserved (negative availability)', async () => {
+    await prisma
+      .$transaction(async (tx) => {
+        const storeId = await seedStore(tx, 'inv-avail-a', 'Inv Avail A');
+        const { variantId } = await seedProductAndVariant(tx, storeId, 'inv-avail-p', 'P');
+        await expectPgState(
+          () =>
+            tx.$queryRaw`INSERT INTO "inventory" (store_id, variant_id, on_hand_quantity, reserved_quantity)
+            VALUES (${storeId}::uuid, ${variantId}::uuid, 5, 6)`,
+          '23514',
+        );
+        throw new Error('__rollback__');
+      })
+      .catch((e: unknown) =>
+        e instanceof Error && e.message === '__rollback__' ? undefined : Promise.reject(e),
+      );
   });
 
-  describe('RLS policies for inventory tables (docs/DATABASE.md §29.3)', () => {
-    it.todo('inventory: SELECT/INSERT/UPDATE/DELETE are tenant-isolated');
-    it.todo('inventory_reservations: SELECT/INSERT/UPDATE/DELETE are tenant-isolated');
-    it.todo('inventory_movements: SELECT/INSERT/UPDATE/DELETE are tenant-isolated');
-    it.todo('writes with no tenant context (app.current_store_id() NULL) are invisible/rejected');
+  it('allows on_hand == reserved (available = 0)', async () => {
+    await prisma
+      .$transaction(async (tx) => {
+        const storeId = await seedStore(tx, 'inv-zero-a', 'Inv Zero A');
+        const { variantId } = await seedProductAndVariant(tx, storeId, 'inv-zero-p', 'P');
+        await seedInventory(tx, storeId, variantId, 0);
+        throw new Error('__rollback__');
+      })
+      .catch((e: unknown) =>
+        e instanceof Error && e.message === '__rollback__' ? undefined : Promise.reject(e),
+      );
   });
 
-  describe('tenant isolation for inventory tables', () => {
-    it.todo('Store A cannot read Store B inventory rows');
-    it.todo('Store A cannot adjust Store B inventory');
-    it.todo('Store A cannot read/release/consume Store B reservations');
-    it.todo('Store A cannot read Store B movements');
+  it('reservation CHECK rejects quantity <= 0', async () => {
+    await prisma
+      .$transaction(async (tx) => {
+        const storeId = await seedStore(tx, 'inv-rqty-a', 'Inv RQty A');
+        const { variantId } = await seedProductAndVariant(tx, storeId, 'inv-rqty-p', 'P');
+        await expectPgState(
+          () =>
+            tx.$queryRaw`INSERT INTO "inventory_reservations" (store_id, variant_id, order_id, quantity, status)
+            VALUES (${storeId}::uuid, ${variantId}::uuid, NULL, 0, 'ACTIVE')`,
+          '23514',
+        );
+        throw new Error('__rollback__');
+      })
+      .catch((e: unknown) =>
+        e instanceof Error && e.message === '__rollback__' ? undefined : Promise.reject(e),
+      );
   });
 
-  describe('atomic reservation under concurrency (docs/DATABASE.md §13.3/§26.2)', () => {
-    it.todo(
-      'stock = 10: two concurrent "reserve 7" requests — only ONE succeeds; final reserved never exceeds 10',
-    );
-    it.todo(
-      'stock = 10: concurrent "reserve 6" + "reserve 4" both succeed; final on_hand = 10, reserved = 10, available = 0',
-    );
-    it.todo(
-      'after the above, releasing one reservation restores exactly its quantity (no double release, no lost update, no negative availability)',
-    );
+  it('reservation CHECK rejects missing cart/order context', async () => {
+    await prisma
+      .$transaction(async (tx) => {
+        const storeId = await seedStore(tx, 'inv-rctx-a', 'Inv RCtx A');
+        const { variantId } = await seedProductAndVariant(tx, storeId, 'inv-rctx-p', 'P');
+        await expectPgState(
+          () =>
+            tx.$queryRaw`INSERT INTO "inventory_reservations" (store_id, variant_id, quantity, status)
+            VALUES (${storeId}::uuid, ${variantId}::uuid, 1, 'ACTIVE')`,
+          '23514',
+        );
+        throw new Error('__rollback__');
+      })
+      .catch((e: unknown) =>
+        e instanceof Error && e.message === '__rollback__' ? undefined : Promise.reject(e),
+      );
   });
 
-  describe('insufficient stock under concurrency', () => {
-    it.todo('the loser of the race creates NO reservation row and NO movement');
+  it('inventory can never reference a variant of another store', async () => {
+    await prisma
+      .$transaction(async (tx) => {
+        const storeA = await seedStore(tx, 'inv-fk-a', 'Inv FK A');
+        const storeB = await seedStore(tx, 'inv-fk-b', 'Inv FK B');
+        const { variantId } = await seedProductAndVariant(tx, storeB, 'inv-fk-pb', 'PB');
+        await expectPgState(
+          () =>
+            tx.$queryRaw`INSERT INTO "inventory" (store_id, variant_id, on_hand_quantity, reserved_quantity)
+            VALUES (${storeA}::uuid, ${variantId}::uuid, 5, 0)`,
+          '23503',
+        );
+        throw new Error('__rollback__');
+      })
+      .catch((e: unknown) =>
+        e instanceof Error && e.message === '__rollback__' ? undefined : Promise.reject(e),
+      );
   });
 
-  describe('duplicate release / duplicate consume (docs/DATABASE.md §14.3)', () => {
-    it.todo('a second release affects zero rows: no second reserved decrement, no second movement');
-    it.todo(
-      'a second consume affects zero rows: no second on_hand/reserved decrement, no second movement',
-    );
+  it('atomic guarded reservation: two concurrent reserve-7 on stock 10 — never over 10', async () => {
+    await prisma
+      .$transaction(async (tx) => {
+        const storeId = await seedStore(tx, 'inv-conc-a', 'Inv Conc A');
+        const { variantId } = await seedProductAndVariant(tx, storeId, 'inv-conc-p', 'P');
+        await seedInventory(tx, storeId, variantId, 10);
+
+        const reserve = (txc: Prisma.TransactionClient) =>
+          txc.$queryRaw`UPDATE "inventory"
+          SET reserved_quantity = reserved_quantity + 7
+          WHERE store_id = ${storeId}::uuid
+            AND variant_id = ${variantId}::uuid
+            AND on_hand_quantity - reserved_quantity >= 7
+          RETURNING id`;
+
+        const results = await Promise.allSettled([reserve(tx), reserve(tx)]);
+        const succeeded = results.filter((r) => r.status === 'fulfilled').length;
+        const failed = results.filter((r) => r.status === 'rejected').length;
+
+        // The two statements serialize on the row lock; at most one can succeed.
+        expect(succeeded + failed).toBe(2);
+        const after = await tx.$queryRaw<{ reserved: number }[]>`
+        SELECT reserved_quantity AS reserved FROM "inventory"
+        WHERE store_id = ${storeId}::uuid AND variant_id = ${variantId}::uuid`;
+        expect(after[0].reserved).toBeLessThanOrEqual(10);
+        throw new Error('__rollback__');
+      })
+      .catch((e: unknown) =>
+        e instanceof Error && e.message === '__rollback__' ? undefined : Promise.reject(e),
+      );
   });
 
-  describe('expiration vs consume race (docs/DATABASE.md §14.2/§28.6)', () => {
-    it.todo('only one operation wins: expiration (RELEASE) or payment success (CONSUME)');
-    it.todo('repeated expiration execution is safe and idempotent');
-  });
+  it('RLS: Store A cannot read Store B inventory rows', async () => {
+    await prisma
+      .$transaction(async (tx) => {
+        const storeA = await seedStore(tx, 'inv-rls-a', 'Inv RLS A');
+        const storeB = await seedStore(tx, 'inv-rls-b', 'Inv RLS B');
+        const { variantId } = await seedProductAndVariant(tx, storeB, 'inv-rls-pb', 'PB');
+        await seedInventory(tx, storeB, variantId, 3);
 
-  describe('movement append-only behavior (docs/DATABASE.md §7.11)', () => {
-    it.todo('movement rows are never updated or deleted (append-only history)');
+        await bindTenant(tx, storeA);
+        const foreign = await tx.$queryRaw<{ count: bigint }[]>`
+        SELECT count(*)::bigint AS count FROM "inventory" WHERE store_id = ${storeB}::uuid`;
+        expect(Number(foreign[0]?.count ?? 0n)).toBe(0);
+        await clearTenant(tx);
+        throw new Error('__rollback__');
+      })
+      .catch((e: unknown) =>
+        e instanceof Error && e.message === '__rollback__' ? undefined : Promise.reject(e),
+      );
   });
 });

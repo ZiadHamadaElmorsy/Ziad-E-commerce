@@ -10,6 +10,8 @@ export const appConfig = {
   apiUrl: process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api/v1',
   supabaseUrl: process.env.NEXT_PUBLIC_SUPABASE_URL ?? '',
   supabaseAnonKey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? '',
+  /** Public storefront platform domain (mirrors the API STOREFRONT_DOMAIN). */
+  storefrontDomain: process.env.NEXT_PUBLIC_STOREFRONT_DOMAIN ?? 'platform-domain.com',
 } as const;
 
 export const isSupabaseConfigured = (): boolean =>

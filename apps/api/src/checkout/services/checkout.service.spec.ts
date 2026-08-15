@@ -1,3 +1,4 @@
+import { ConfigService } from '@nestjs/config';
 import {
   CartStatus,
   OrderStatus,
@@ -141,6 +142,7 @@ describe('CheckoutService', () => {
     shippingAddressSnapshot: { governorate: 'Gharbia' },
     billingAddressSnapshot: null,
     idempotencyKey: null,
+    lookupToken: 'lookup-token-1',
     createdAt: new Date('2026-08-12T00:00:00Z'),
     updatedAt: new Date('2026-08-12T00:00:00Z'),
     confirmedAt: null,
@@ -212,6 +214,7 @@ describe('CheckoutService', () => {
       customers as unknown as CustomerRepository,
       orders as unknown as OrderRepository,
       transaction as unknown as TransactionService,
+      { get: jest.fn().mockReturnValue(30 * 60 * 1000) } as unknown as ConfigService,
     );
   });
 
@@ -253,6 +256,7 @@ describe('CheckoutService', () => {
     customerId: 'customer-1',
     customerEmail: 'ahmed@example.com',
     customerPhone: '01000000000',
+    lookupToken: 'lookup-token-1',
     items: [
       {
         productId: 'product-1',
@@ -454,9 +458,14 @@ describe('CheckoutService', () => {
         firstName: 'Ahmed',
         lastName: 'Ali',
       });
-      expect(reservations.reserveTx).toHaveBeenCalledWith(tx, 'store-1', 'variant-1', 2, {
-        cartId: 'cart-1',
-      });
+      expect(reservations.reserveTx).toHaveBeenCalledWith(
+        tx,
+        'store-1',
+        'variant-1',
+        2,
+        { cartId: 'cart-1' },
+        expect.any(Date),
+      );
       expect(orders.create).toHaveBeenCalledWith(
         tx,
         expect.objectContaining({

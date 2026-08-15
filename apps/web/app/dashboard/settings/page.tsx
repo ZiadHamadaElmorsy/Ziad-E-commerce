@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { useI18n } from '@/lib/i18n/i18n-context';
 import { useAuth } from '@/lib/auth/auth-context';
-import { storeApi, type StoreView } from '@/lib/api/store';
+import { storeApi, type StoreView, type WhatsAppSettingsView } from '@/lib/api/store';
 import { subscriptionApi } from '@/lib/api/subscription';
 import type { SubscriptionView } from '@/lib/api/types';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -17,12 +17,20 @@ import { useToast } from '@/components/ui/Toast';
 import { formatDate, titleCase } from '@/lib/utils';
 import { apiErrorMessage } from '@/lib/i18n/api-error';
 
+/** International WhatsApp phone: 1-3 digit country code + 7-13 digit number. */
+const WHATSAPP_PHONE_PATTERN = /^\+?[0-9\s\-()]{9,18}$/;
+
+/** Builds the digits-only E.164 value sent to the API (the API normalizes it). */
+function toDigits(value: string): string {
+  return value.replace(/\s/g, '');
+}
+
 /**
  * Settings — only exposes sections the real backend supports:
  *  - Store settings  (PATCH /stores/current — name only, per API-SPEC §15)
+ *  - WhatsApp orders (Phase 22 — GET/PUT /stores/current/settings/whatsapp)
  *  - Account         (/auth/me — identity + role)
  *  - Subscription    (GET /subscription)
- *  - Payments        (not available yet — Paymob integration is planned)
  *  - Localization    (currency + timezone from the store, read-only)
  */
 export default function SettingsPage() {
@@ -41,6 +49,16 @@ export default function SettingsPage() {
   const [subscription, setSubscription] = useState<SubscriptionView | null>(null);
   const [subLoading, setSubLoading] = useState(true);
   const [subError, setSubError] = useState<string | null>(null);
+
+  // WhatsApp ordering (Phase 22).
+  const [whatsapp, setWhatsapp] = useState<WhatsAppSettingsView['whatsapp'] | null>(null);
+  const [whatsappLoading, setWhatsappLoading] = useState(true);
+  const [whatsappError, setWhatsappError] = useState<string | null>(null);
+  const [whatsappEnabled, setWhatsappEnabled] = useState(false);
+  const [whatsappNumber, setWhatsappNumber] = useState('');
+  const [whatsappLabel, setWhatsappLabel] = useState('');
+  const [whatsappNumberError, setWhatsappNumberError] = useState<string | undefined>();
+  const [whatsappSaving, setWhatsappSaving] = useState(false);
 
   const loadStore = useCallback(async () => {
     setStoreLoading(true);
@@ -69,11 +87,54 @@ export default function SettingsPage() {
     }
   }, [t]);
 
+  const loadWhatsApp = useCallback(async () => {
+    setWhatsappLoading(true);
+    setWhatsappError(null);
+    try {
+      const result = await storeApi.getWhatsAppSettings();
+      setWhatsapp(result.data.whatsapp);
+      setWhatsappEnabled(result.data.whatsapp.enabled);
+      setWhatsappNumber(result.data.whatsapp.phoneNumber);
+      setWhatsappLabel(result.data.whatsapp.label ?? '');
+    } catch (caught) {
+      setWhatsappError(apiErrorMessage(caught, t, 'settings.whatsappLoadFailed'));
+    } finally {
+      setWhatsappLoading(false);
+    }
+  }, [t]);
+
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void loadStore();
     void loadSubscription();
-  }, [loadStore, loadSubscription]);
+    void loadWhatsApp();
+  }, [loadStore, loadSubscription, loadWhatsApp]);
+
+  const handleSaveWhatsApp = async (event: FormEvent) => {
+    event.preventDefault();
+    setWhatsappNumberError(undefined);
+    const digits = toDigits(whatsappNumber.trim());
+    if (whatsappEnabled && !WHATSAPP_PHONE_PATTERN.test(whatsappNumber.trim())) {
+      setWhatsappNumberError(t('settings.whatsappInvalidNumber'));
+      return;
+    }
+    setWhatsappSaving(true);
+    try {
+      const result = await storeApi.updateWhatsAppSettings({
+        whatsapp: {
+          enabled: whatsappEnabled,
+          phoneNumber: digits,
+          ...(whatsappLabel.trim() ? { label: whatsappLabel.trim() } : {}),
+        },
+      });
+      setWhatsapp(result.data.whatsapp);
+      toast.success(t('settings.whatsappUpdatedToast'));
+    } catch (caught) {
+      toast.error(apiErrorMessage(caught, t, 'settings.whatsappUpdateFailed'));
+    } finally {
+      setWhatsappSaving(false);
+    }
+  };
 
   const handleSaveStore = async (event: FormEvent) => {
     event.preventDefault();
@@ -192,8 +253,68 @@ export default function SettingsPage() {
             </dl>
           </Card>
 
-          <Card title={t('settings.payments')} description={t('settings.paymentsDesc')}>
-            <p className="card__muted">{t('settings.paymentsNotAvailable')}</p>
+          <Card title={t('settings.whatsapp')} description={t('settings.whatsappDesc')}>
+            {whatsappError ? (
+              <ErrorState message={whatsappError} onRetry={() => void loadWhatsApp()} />
+            ) : whatsappLoading || !whatsapp ? (
+              <LoadingBlock label={t('common.loading')} />
+            ) : (
+              <form onSubmit={handleSaveWhatsApp} noValidate>
+                <div className="form-grid">
+                  <label className="field">
+                    <span className="field__label">
+                      <input
+                        type="checkbox"
+                        className="checkbox"
+                        checked={whatsappEnabled}
+                        onChange={(event) => setWhatsappEnabled(event.target.checked)}
+                        data-testid="whatsapp-enabled"
+                      />{' '}
+                      {t('settings.whatsappEnabled')}
+                    </span>
+                    <span className="field__hint">{t('settings.whatsappEnabledDesc')}</span>
+                  </label>
+
+                  <Field
+                    label={t('settings.whatsappNumber')}
+                    htmlFor="settings-whatsapp-number"
+                    hint={t('settings.whatsappNumberHint')}
+                    error={whatsappNumberError}
+                  >
+                    <Input
+                      id="settings-whatsapp-number"
+                      value={whatsappNumber}
+                      onChange={(event) => setWhatsappNumber(event.target.value)}
+                      inputMode="tel"
+                      autoComplete="tel"
+                      dir="ltr"
+                    />
+                  </Field>
+
+                  <Field
+                    label={t('settings.whatsappLabel')}
+                    htmlFor="settings-whatsapp-label"
+                    error={undefined}
+                  >
+                    <Input
+                      id="settings-whatsapp-label"
+                      value={whatsappLabel}
+                      onChange={(event) => setWhatsappLabel(event.target.value)}
+                    />
+                  </Field>
+                </div>
+                {!whatsappEnabled ? (
+                  <p className="form-hint" data-testid="whatsapp-disabled-warning">
+                    {t('settings.whatsappDisabledWarning')}
+                  </p>
+                ) : null}
+                <div className="form-actions">
+                  <Button type="submit" loading={whatsappSaving}>
+                    {whatsappSaving ? t('common.saving') : t('common.saveChanges')}
+                  </Button>
+                </div>
+              </form>
+            )}
           </Card>
         </aside>
       </div>

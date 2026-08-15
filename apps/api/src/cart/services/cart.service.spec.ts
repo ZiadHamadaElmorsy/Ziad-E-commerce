@@ -1,3 +1,4 @@
+import { ConfigService } from '@nestjs/config';
 import { CartStatus, Prisma, ProductStatus, VariantStatus } from '@prisma/client';
 import { RequestContextService } from '../../common/context/request-context.service';
 import {
@@ -134,6 +135,7 @@ describe('CartService', () => {
       products as unknown as ProductRepository,
       inventoryService as unknown as InventoryService,
       transaction as unknown as TransactionService,
+      { get: jest.fn().mockReturnValue(7 * 24 * 60 * 60 * 1000) } as unknown as ConfigService,
     );
   });
 
@@ -609,6 +611,23 @@ describe('CartService', () => {
       const result = await service.expireDueCarts(100);
 
       expect(result).toEqual({ scanned: 1, expired: 0 });
+    });
+
+    it('expireDueCartsForStore runs without a tenant context (Phase 21 job path)', async () => {
+      carts.findDueForExpiration.mockResolvedValue([{ ...cartRow, id: 'cart-1' }]);
+      carts.transitionStatus.mockResolvedValue({ count: 1 });
+
+      const result = await service.expireDueCartsForStore('store-42', 50);
+
+      expect(carts.findDueForExpiration).toHaveBeenCalledWith('store-42', expect.any(Date), 50);
+      expect(carts.transitionStatus).toHaveBeenCalledTimes(1);
+      expect(result).toEqual({ scanned: 1, expired: 1 });
+    });
+
+    it('expireDueCartsForStore validates the batch size', async () => {
+      await expect(service.expireDueCartsForStore('store-42', 0)).rejects.toBeInstanceOf(
+        ValidationError,
+      );
     });
   });
 });

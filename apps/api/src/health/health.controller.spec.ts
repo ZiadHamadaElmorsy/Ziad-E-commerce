@@ -4,7 +4,7 @@ import { HealthService, HealthStatus } from './health.service';
 
 describe('HealthController', () => {
   let controller: HealthController;
-  const healthService = { check: jest.fn() };
+  const healthService = { check: jest.fn(), live: jest.fn(), ready: jest.fn() };
 
   beforeEach(async () => {
     const moduleRef = await Test.createTestingModule({
@@ -32,5 +32,19 @@ describe('HealthController', () => {
     healthService.check.mockResolvedValue(status);
 
     await expect(controller.check()).resolves.toEqual(status);
+  });
+
+  it('live() delegates to the liveness probe', () => {
+    const live = { status: 'ok' as const, service: 'ziad-api', timestamp: '', uptimeSeconds: 1 };
+    healthService.live.mockReturnValue(live);
+
+    expect(controller.live()).toEqual(live);
+  });
+
+  it('ready() delegates to the readiness probe', async () => {
+    const ready = { status: 'ok' as const, service: 'ziad-api', timestamp: '', checks: { database: 'up' as const } };
+    healthService.ready.mockResolvedValue(ready);
+
+    await expect(controller.ready()).resolves.toEqual(ready);
   });
 });

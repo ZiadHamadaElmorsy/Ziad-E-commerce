@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { Order, OrderStatus, Prisma } from '@prisma/client';
+import { Order, OrderChannel, OrderStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { OrderWithDetails } from '../orders.types';
 
@@ -96,6 +96,25 @@ export class OrderRepository {
         ...(timestamps.confirmedAt ? { confirmedAt: timestamps.confirmedAt } : {}),
         ...(timestamps.cancelledAt ? { cancelledAt: timestamps.cancelledAt } : {}),
       },
+    });
+  }
+
+  /**
+   * Store-scoped channel update (Phase 22). Used ONLY by the WhatsApp order
+   * flow to transition an existing PENDING order to the WHATSAPP channel when
+   * the customer chooses WhatsApp instead of the failed online payment. The
+   * guarded conditional UPDATE keeps concurrent status changes safe.
+   */
+  async transitionChannel(
+    tx: Prisma.TransactionClient,
+    storeId: string,
+    orderId: string,
+    from: OrderChannel,
+    to: OrderChannel,
+  ): Promise<{ count: number }> {
+    return tx.order.updateMany({
+      where: { id: orderId, storeId, channel: from },
+      data: { channel: to },
     });
   }
 

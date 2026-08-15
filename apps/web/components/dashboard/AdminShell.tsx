@@ -20,6 +20,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
     <div className="app-shell">
       <Sidebar
         storeName={store?.name}
+        storeSlug={store?.slug}
         mobileOpen={mobileOpen}
         onNavigate={() => setMobileOpen(false)}
       />

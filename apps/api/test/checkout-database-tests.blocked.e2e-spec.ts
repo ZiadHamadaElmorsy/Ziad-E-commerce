@@ -1,69 +1,215 @@
 /**
- * BLOCKED database-level Checkout tests (PHASE 7).
- *
- * These tests require a real PostgreSQL instance with the FINAL schema applied
- * (migration `20260812000000_init`), RLS enabled and Supabase-compatible
- * plumbing. PostgreSQL is NOT available in this environment, so the whole suite
- * is `describe.skip` + `it.todo` — following the exact convention established
- * by the Cart/Inventory phases.
- *
- * NOTHING in this file is executed; nothing is faked. When a real database is
- * available, convert each `it.todo` into a real assertion and run the suite.
+ * CHECKOUT DATABASE INTEGRATION TESTS — REAL PostgreSQL (Phase 23).
+ * Gated on POSTGRES_RLS_TEST_DATABASE_URL (see docs/RLS-TEST-ENVIRONMENT.md).
+ * Every probe runs inside a transaction that is rolled back.
  */
-describe('Checkout database tests (BLOCKED — PostgreSQL unavailable)', () => {
-  describe.skip('Database / RLS / concurrency behavior', () => {
-    it.todo(
-      'runs a clean migration and applies the FINAL schema (orders, order_items, reservations)',
-    );
+import { PrismaClient } from '@prisma/client';
+import {
+  bindTenant,
+  clearTenant,
+  createTestClient,
+  expectPgState,
+  RLS_TEST_DATABASE_URL,
+  seedOrder,
+  seedProductAndVariant,
+  seedStore,
+} from './db-helpers';
 
-    it.todo(
-      'persists the PENDING Order with purchase-time snapshots and a Store-unique order_number',
-    );
+const describeOrSkip = RLS_TEST_DATABASE_URL ? describe : describe.skip;
 
-    it.todo(
-      'persists OrderItems with product/variant name, SKU, unit_price, quantity, line_total snapshots',
-    );
+describeOrSkip('Checkout database integration (real PostgreSQL)', () => {
+  let prisma: PrismaClient;
 
-    it.todo('creates ACTIVE reservations and links them to the order_id after order creation');
+  beforeAll(async () => {
+    prisma = createTestClient();
+    await prisma.$connect();
+  });
 
-    it.todo(
-      'transitions the cart to COMPLETED with completed_at set at the same commit as the order',
-    );
+  afterAll(async () => {
+    await prisma?.$disconnect();
+  });
 
-    it.todo(
-      'rolls back the ENTIRE checkout when inventory is insufficient (no order, no partial reservations)',
-    );
+  it('orders UNIQUE (store_id, order_number) rejects a duplicate order number', async () => {
+    await prisma
+      .$transaction(async (tx) => {
+        const storeId = await seedStore(tx, 'co-uniq-a', 'CO Uniq A');
+        await seedOrder(tx, storeId, 'ORD-2026-000001');
+        await expectPgState(
+          () =>
+            tx.$queryRaw`INSERT INTO "orders" (
+              store_id, order_number, channel, status, currency,
+              subtotal, discount_total, shipping_total, tax_total, grand_total,
+              shipping_address_snapshot, lookup_token
+            ) VALUES (
+              ${storeId}::uuid, 'ORD-2026-000001', 'ONLINE_PAYMENT', 'PENDING', 'EGP',
+              1000, 0, 0, 0, 1000, '{}'::jsonb, gen_random_uuid()::text
+            )`,
+          '23505',
+        );
+        throw new Error('__rollback__');
+      })
+      .catch((e: unknown) =>
+        e instanceof Error && e.message === '__rollback__' ? undefined : Promise.reject(e),
+      );
+  });
 
-    it.todo('rolls back the ENTIRE checkout when order creation fails (no orphaned reservations)');
+  it('orders partial UNIQUE (store_id, idempotency_key) rejects a reused idempotency key', async () => {
+    await prisma
+      .$transaction(async (tx) => {
+        const storeId = await seedStore(tx, 'co-key-a', 'CO Key A');
+        await seedOrder(tx, storeId, 'ORD-2026-000002', { idempotencyKey: 'key-1' });
+        await expectPgState(
+          () => seedOrder(tx, storeId, 'ORD-2026-000003', { idempotencyKey: 'key-1' }),
+          '23505',
+        );
+        throw new Error('__rollback__');
+      })
+      .catch((e: unknown) =>
+        e instanceof Error && e.message === '__rollback__' ? undefined : Promise.reject(e),
+      );
+  });
 
-    it.todo('rolls back the ENTIRE checkout when the cart transition to COMPLETED fails');
+  it('orders CHECK rejects an inconsistent grand_total', async () => {
+    await prisma
+      .$transaction(async (tx) => {
+        const storeId = await seedStore(tx, 'co-gt-a', 'CO GT A');
+        await expectPgState(
+          () =>
+            tx.$queryRaw`INSERT INTO "orders" (
+              store_id, order_number, channel, status, currency,
+              subtotal, discount_total, shipping_total, tax_total, grand_total,
+              shipping_address_snapshot, lookup_token
+            ) VALUES (
+              ${storeId}::uuid, 'ORD-2026-000004', 'ONLINE_PAYMENT', 'PENDING', 'EGP',
+              1000, 0, 0, 0, 999, '{}'::jsonb, gen_random_uuid()::text
+            )`,
+          '23514',
+        );
+        throw new Error('__rollback__');
+      })
+      .catch((e: unknown) =>
+        e instanceof Error && e.message === '__rollback__' ? undefined : Promise.reject(e),
+      );
+  });
 
-    it.todo('enforces UNIQUE (store_id, order_number) under concurrent checkouts');
+  it('order_items CHECK rejects quantity = 0', async () => {
+    await prisma
+      .$transaction(async (tx) => {
+        const storeId = await seedStore(tx, 'co-oi-a', 'CO OI A');
+        const { variantId } = await seedProductAndVariant(tx, storeId, 'co-oi-p', 'P');
+        const orderId = await seedOrder(tx, storeId, 'ORD-2026-000005');
+        await expectPgState(
+          () =>
+            tx.$queryRaw`INSERT INTO "order_items" (
+              order_id, product_id, variant_id, product_name_snapshot,
+              variant_name_snapshot, sku_snapshot, unit_price, quantity, line_total
+            ) VALUES (${orderId}::uuid, NULL, ${variantId}::uuid, 'P', 'P', NULL, 1000, 0, 0)`,
+          '23514',
+        );
+        throw new Error('__rollback__');
+      })
+      .catch((e: unknown) =>
+        e instanceof Error && e.message === '__rollback__' ? undefined : Promise.reject(e),
+      );
+  });
 
-    it.todo(
-      'enforces UNIQUE (store_id, idempotency_key) and returns the existing order on a retry',
-    );
+  it('inventory_reservations CHECK requires cart_id or order_id context', async () => {
+    await prisma
+      .$transaction(async (tx) => {
+        const storeId = await seedStore(tx, 'co-res-a', 'CO Res A');
+        const { variantId } = await seedProductAndVariant(tx, storeId, 'co-res-p', 'P');
+        await expectPgState(
+          () =>
+            tx.$queryRaw`INSERT INTO "inventory_reservations" (store_id, variant_id, quantity, status)
+            VALUES (${storeId}::uuid, ${variantId}::uuid, 1, 'ACTIVE')`,
+          '23514',
+        );
+        throw new Error('__rollback__');
+      })
+      .catch((e: unknown) =>
+        e instanceof Error && e.message === '__rollback__' ? undefined : Promise.reject(e),
+      );
+  });
 
-    it.todo('prevents two concurrent checkouts of the same cart from producing two orders');
+  it('RLS: a member cannot create an order for another store (parent-tenant boundary)', async () => {
+    await prisma
+      .$transaction(async (tx) => {
+        const storeA = await seedStore(tx, 'co-fk-a', 'CO FK A');
+        const storeB = await seedStore(tx, 'co-fk-b', 'CO FK B');
+        const customers = await tx.$queryRaw<{ id: string }[]>`
+        INSERT INTO "customers" (store_id, phone, first_name, last_name)
+        VALUES (${storeB}::uuid, '01000000000', 'B', 'C') RETURNING id`;
+        // orders.customer_id is intentionally NOT a composite tenant FK
+        // (customers are store-scoped at the application layer); the tenant
+        // boundary the database enforces is the orders.store_id policy.
+        await bindTenant(tx, storeA);
+        await expectPgState(
+          () =>
+            tx.$queryRaw`INSERT INTO "orders" (
+              store_id, order_number, customer_id, channel, status, currency,
+              subtotal, discount_total, shipping_total, tax_total, grand_total,
+              shipping_address_snapshot, lookup_token
+            ) VALUES (
+              ${storeB}::uuid, 'ORD-2026-000006', ${customers[0].id}::uuid,
+              'ONLINE_PAYMENT', 'PENDING', 'EGP',
+              1000, 0, 0, 0, 1000, '{}'::jsonb, gen_random_uuid()::text
+            )`,
+          '42501',
+        );
+        throw new Error('__rollback__');
+      })
+      .catch((e: unknown) =>
+        e instanceof Error && e.message === '__rollback__' ? undefined : Promise.reject(e),
+      );
+  });
 
-    it.todo(
-      'prevents overselling under concurrent reservations (atomic guarded reserved increment)',
-    );
+  it('rolls back the whole checkout transaction when a later write fails', async () => {
+    await prisma
+      .$transaction(async (tx) => {
+        const storeId = await seedStore(tx, 'co-tx-a', 'CO TX A');
+        const { variantId } = await seedProductAndVariant(tx, storeId, 'co-tx-p', 'P');
+        const orderId = await seedOrder(tx, storeId, 'ORD-2026-000007');
+        let failed = false;
+        try {
+          // quantity = 0 violates the order_items CHECK -> whole tx aborts.
+          await tx.$queryRaw`INSERT INTO "order_items" (
+            order_id, product_id, variant_id, product_name_snapshot,
+            variant_name_snapshot, sku_snapshot, unit_price, quantity, line_total
+          ) VALUES (${orderId}::uuid, NULL, ${variantId}::uuid, 'P', 'P', NULL, 1000, 0, 0)`;
+        } catch {
+          failed = true;
+        }
+        expect(failed).toBe(true);
+        // PostgreSQL aborted the whole transaction — any further statement
+        // raises 25P02, proving no partial state can persist (Prisma rolls
+        // the transaction back on exit).
+        await expectPgState(
+          () => tx.$queryRaw`SELECT count(*)::bigint AS count FROM "orders" WHERE id = ${orderId}::uuid`,
+          '25P02',
+        );
+        throw new Error('__rollback__');
+      })
+      .catch((e: unknown) =>
+        e instanceof Error && e.message === '__rollback__' ? undefined : Promise.reject(e),
+      );
+  });
 
-    it.todo('enforces the composite store-scoped FKs (order -> customer, order_item -> variant)');
+  it('RLS: Store A cannot read Store B orders', async () => {
+    await prisma
+      .$transaction(async (tx) => {
+        const storeA = await seedStore(tx, 'co-rls-a', 'CO RLS A');
+        const storeB = await seedStore(tx, 'co-rls-b', 'CO RLS B');
+        await seedOrder(tx, storeB, 'ORD-2026-000008');
 
-    it.todo('enforces CHECK constraints (grand_total consistency, quantity > 0, line_total >= 0)');
-
-    it.todo(
-      'enforces RLS tenant isolation for checkout reads/writes (Store A cannot check out Store B carts)',
-    );
-
-    it.todo(
-      'never leaks cross-tenant existence (unknown guest token returns NOT_FOUND, not FORBIDDEN)',
-    );
-
-    it.todo(
-      'releases ACTIVE reservations when the linked order is cancelled (later phase, guarded)',
-    );
+        await bindTenant(tx, storeA);
+        const foreign = await tx.$queryRaw<{ count: bigint }[]>`
+        SELECT count(*)::bigint AS count FROM "orders" WHERE store_id = ${storeB}::uuid`;
+        expect(Number(foreign[0]?.count ?? 0n)).toBe(0);
+        await clearTenant(tx);
+        throw new Error('__rollback__');
+      })
+      .catch((e: unknown) =>
+        e instanceof Error && e.message === '__rollback__' ? undefined : Promise.reject(e),
+      );
   });
 });

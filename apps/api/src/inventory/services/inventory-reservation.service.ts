@@ -445,12 +445,23 @@ export class InventoryReservationService {
    * reservation is independently retryable. A reservation already consumed or
    * released by a concurrent operation is skipped (guarded UPDATE count 0).
    *
-   * This is the callable sweep unit (per Store, small batches). Scheduling is
-   * deliberately left to a future infrastructure decision (no new dependency).
+   * `storeId` comes from the trusted tenant context.
    */
   async expireDueReservations(batchSize = 100): Promise<{ scanned: number; released: number }> {
-    const storeId = requireStoreId(this.requestContext);
+    return this.expireDueReservationsForStore(requireStoreId(this.requestContext), batchSize);
+  }
 
+  /**
+   * Store-driven reservation expiration sweep — the callable unit used by the
+   * Phase 21 periodic maintenance job (no request context required). Each
+   * reservation is released in its own tenant-bound transaction with the
+   * guarded ACTIVE -> RELEASED transition first, so repeated execution is an
+   * idempotent no-op and paid (CONSUMED) reservations are never released.
+   */
+  async expireDueReservationsForStore(
+    storeId: string,
+    batchSize = 100,
+  ): Promise<{ scanned: number; released: number }> {
     if (!Number.isInteger(batchSize) || batchSize <= 0) {
       throw new ValidationError('Batch size must be a positive integer.');
     }

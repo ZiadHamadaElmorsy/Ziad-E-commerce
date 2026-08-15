@@ -46,4 +46,14 @@ export class StoreMembershipRepository {
       where: { userId, status: MembershipStatus.ACTIVE },
     });
   }
+
+  /** Lists ACTIVE memberships inside the caller's transaction (onboarding idempotency). */
+  async findActiveMembershipsForUserTx(
+    tx: Prisma.TransactionClient,
+    userId: string,
+  ): Promise<StoreMembership[]> {
+    return tx.storeMembership.findMany({
+      where: { userId, status: MembershipStatus.ACTIVE },
+    });
+  }
 }

@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import Link from 'next/link';
 import { useI18n } from '@/lib/i18n/i18n-context';
 import { useAuth } from '@/lib/auth/auth-context';
 import { storeApi, type StoreView } from '@/lib/api/store';
@@ -76,7 +77,17 @@ export default function StorePage() {
 
   return (
     <div className="page">
-      <PageHeader title={t('store.title')} description={t('store.desc')} />
+      <PageHeader
+        title={t('store.title')}
+        description={t('store.desc')}
+        actions={
+          meStore ? (
+            <Link href={`/store/${meStore.slug}`} className="btn btn--primary btn--sm" data-testid="view-store">
+              {t('store.viewStore')}
+            </Link>
+          ) : null
+        }
+      />
 
       {error ? (
         <ErrorState message={error} onRetry={() => void load()} />

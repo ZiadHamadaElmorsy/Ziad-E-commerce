@@ -1,58 +1,114 @@
 /**
- * IDENTITY & TENANCY DATABASE INTEGRATION TESTS — BLOCKED
- * ========================================================
- *
- * Status: BLOCKED — PostgreSQL unavailable.
- *
- * A live PostgreSQL instance (DATABASE_URL) is not available in the current
- * environment. These tests REQUIRE a real database and therefore CANNOT be
- * executed. They are intentionally defined with `describe.skip` so they are
- * visible, clearly marked, and can be enabled immediately once a database is
- * reachable (remove the `.skip`).
- *
- * What they would verify (matching the FINAL database contract):
- *   - atomic Store + OWNER membership creation (DATABASE.md §28)
- *   - stores.slug global UNIQUE enforcement
- *   - the partial UNIQUE (store_id) WHERE role = 'OWNER' single-owner rule
- *   - the UNIQUE (store_id, user_id) membership rule
- *   - RLS policies for users / stores / store_memberships (DATABASE.md §29.5)
- *   - tenant isolation of the identity tables
- *
- * These scenarios are NOT covered by any passing test in this phase.
+ * IDENTITY DATABASE INTEGRATION TESTS — REAL PostgreSQL (Phase 23).
+ * Gated on POSTGRES_RLS_TEST_DATABASE_URL (see docs/RLS-TEST-ENVIRONMENT.md).
  */
-describe.skip('Identity & Tenancy database integration — BLOCKED — PostgreSQL unavailable', () => {
-  describe('store creation transaction (DATABASE.md §28)', () => {
-    it.todo('creates Store + ACTIVE OWNER membership atomically');
-    it.todo('rolls back the Store row when OWNER membership creation fails (no orphan store)');
-    it.todo('a failed creation leaves no rows behind (insert then abort)');
+import { PrismaClient } from '@prisma/client';
+import {
+  clearTenant,
+  createTestClient,
+  ENFORCEMENT_ROLE,
+  expectPgState,
+  RLS_TEST_DATABASE_URL,
+  seedStore,
+} from './db-helpers';
+
+const describeOrSkip = RLS_TEST_DATABASE_URL ? describe : describe.skip;
+
+describeOrSkip('Identity database integration (real PostgreSQL)', () => {
+  let prisma: PrismaClient;
+
+  beforeAll(async () => {
+    prisma = createTestClient();
+    await prisma.$connect();
   });
 
-  describe('store slug uniqueness', () => {
-    it.todo('enforces the global UNIQUE stores.slug index (second insert fails)');
+  afterAll(async () => {
+    await prisma?.$disconnect();
   });
 
-  describe('single OWNER per store', () => {
-    it.todo('enforces the partial UNIQUE (store_id) WHERE role = OWNER index');
+  it('stores UNIQUE slug rejects a duplicate store slug', async () => {
+    await prisma
+      .$transaction(async (tx) => {
+        await seedStore(tx, 'id-slug', 'Id Slug');
+        await expectPgState(
+          () =>
+            tx.$queryRaw`INSERT INTO "stores" (slug, name, status, currency, timezone)
+            VALUES ('id-slug', 'Duplicate', 'ACTIVE', 'EGP', 'Africa/Cairo')`,
+          '23505',
+        );
+        throw new Error('__rollback__');
+      })
+      .catch((e: unknown) =>
+        e instanceof Error && e.message === '__rollback__' ? undefined : Promise.reject(e),
+      );
   });
 
-  describe('store_memberships uniqueness', () => {
-    it.todo('enforces UNIQUE (store_id, user_id): one membership per user per store');
+  it('users UNIQUE email rejects a duplicate user email', async () => {
+    await prisma
+      .$transaction(async (tx) => {
+        await tx.$queryRaw`INSERT INTO "users" (auth_user_id, email, first_name, last_name)
+        VALUES ('10000000-0000-0000-0000-000000000001'::uuid, 'merchant@example.com', 'M', 'N')`;
+        await expectPgState(
+          () =>
+            tx.$queryRaw`INSERT INTO "users" (auth_user_id, email, first_name, last_name)
+            VALUES ('10000000-0000-0000-0000-000000000002'::uuid, 'merchant@example.com', 'M', 'N')`,
+          '23505',
+        );
+        throw new Error('__rollback__');
+      })
+      .catch((e: unknown) =>
+        e instanceof Error && e.message === '__rollback__' ? undefined : Promise.reject(e),
+      );
   });
 
-  describe('RLS policies for identity tables (DATABASE.md §29.5)', () => {
-    it.todo('users: an authenticated user can select only their own row');
-    it.todo(
-      'stores: member_store_select exposes only stores the member has an ACTIVE membership in',
-    );
-    it.todo('store_memberships: member_membership_select exposes only own-store memberships');
-    it.todo(
-      'writes to stores / store_memberships require the service role (no authenticated write policy)',
-    );
+  it('store_memberships UNIQUE (store_id, user_id) rejects a duplicate membership', async () => {
+    await prisma
+      .$transaction(async (tx) => {
+        const storeId = await seedStore(tx, 'id-mem', 'Id Mem');
+        await tx.$queryRaw`INSERT INTO "users" (auth_user_id, email, first_name, last_name)
+        VALUES ('10000000-0000-0000-0000-000000000010'::uuid, 'mem@example.com', 'M', 'N')`;
+        await tx.$queryRaw`INSERT INTO "store_memberships" (store_id, user_id, role, status)
+        VALUES (${storeId}::uuid, (SELECT id FROM "users" WHERE auth_user_id = '10000000-0000-0000-0000-000000000010'::uuid), 'OWNER', 'ACTIVE')`;
+        await expectPgState(
+          () =>
+            tx.$queryRaw`INSERT INTO "store_memberships" (store_id, user_id, role, status)
+            VALUES (${storeId}::uuid, (SELECT id FROM "users" WHERE auth_user_id = '10000000-0000-0000-0000-000000000010'::uuid), 'ADMIN', 'ACTIVE')`,
+          '23505',
+        );
+        throw new Error('__rollback__');
+      })
+      .catch((e: unknown) =>
+        e instanceof Error && e.message === '__rollback__' ? undefined : Promise.reject(e),
+      );
   });
 
-  describe('tenant isolation for identity tables', () => {
-    it.todo('User A cannot read User B rows through RLS');
-    it.todo('Store A members cannot observe Store B memberships');
-    it.todo('an INACTIVE membership grants no store/membership visibility');
+  it('RLS: a member sees only stores they belong to, and a user only their own row', async () => {
+    await prisma
+      .$transaction(async (tx) => {
+        const storeA = await seedStore(tx, 'id-rls-a', 'Id RLS A');
+        const storeB = await seedStore(tx, 'id-rls-b', 'Id RLS B');
+        await tx.$queryRaw`INSERT INTO "users" (id, auth_user_id, email, first_name, last_name)
+        VALUES ('aaaa0000-0000-0000-0000-000000000001'::uuid, '10000000-0000-0000-0000-000000000101'::uuid, 'rls@example.com', 'R', 'L')`;
+        await tx.$queryRaw`INSERT INTO "store_memberships" (store_id, user_id, role, status)
+        VALUES (${storeA}::uuid, 'aaaa0000-0000-0000-0000-000000000001'::uuid, 'OWNER', 'ACTIVE')`;
+
+        // Set the "authenticated user" session GUC (standalone auth.uid()).
+        await tx.$executeRaw`SELECT set_config('app.current_user_id', 'aaaa0000-0000-0000-0000-000000000001', true)`;
+        await tx.$executeRaw`SELECT set_config('role', ${ENFORCEMENT_ROLE}, true)`;
+
+        const myStore = await tx.$queryRaw<{ count: bigint }[]>`
+        SELECT count(*)::bigint AS count FROM "stores" WHERE id = ${storeA}::uuid`;
+        expect(Number(myStore[0]?.count ?? 0n)).toBe(1);
+
+        const otherStore = await tx.$queryRaw<{ count: bigint }[]>`
+        SELECT count(*)::bigint AS count FROM "stores" WHERE id = ${storeB}::uuid`;
+        expect(Number(otherStore[0]?.count ?? 0n)).toBe(0);
+
+        await clearTenant(tx);
+        throw new Error('__rollback__');
+      })
+      .catch((e: unknown) =>
+        e instanceof Error && e.message === '__rollback__' ? undefined : Promise.reject(e),
+      );
   });
 });

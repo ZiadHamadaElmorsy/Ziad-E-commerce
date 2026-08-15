@@ -1,6 +1,7 @@
 import {
   InventoryReservation,
   Order,
+  OrderChannel,
   OrderItem,
   OrderStatus,
   ReservationStatus,
@@ -47,6 +48,7 @@ export interface CheckoutReservationView {
 export interface CheckoutView {
   orderId: string;
   orderNumber: string;
+  channel: OrderChannel;
   status: OrderStatus;
   currency: string;
   subtotal: number;
@@ -57,6 +59,13 @@ export interface CheckoutView {
   customerId: string | null;
   customerEmail: string | null;
   customerPhone: string | null;
+  /**
+   * Phase 23 — per-order secure lookup token. Returned ONLY to the party that
+   * created the order (the checkout / WhatsApp response); required to read the
+   * customer PII of this order through the PUBLIC storefront confirmation
+   * endpoint. Never logged, never persisted anywhere else.
+   */
+  lookupToken: string | null;
   items: CheckoutItemView[];
   reservations: CheckoutReservationView[];
   createdAt: string;
@@ -66,6 +75,7 @@ export function toCheckoutView(order: OrderWithDetails): CheckoutView {
   return {
     orderId: order.id,
     orderNumber: order.orderNumber,
+    channel: order.channel,
     status: order.status,
     currency: order.currency,
     subtotal: Number(order.subtotal),
@@ -76,6 +86,7 @@ export function toCheckoutView(order: OrderWithDetails): CheckoutView {
     customerId: order.customerId,
     customerEmail: order.customerEmail,
     customerPhone: order.customerPhone,
+    lookupToken: order.lookupToken ?? null,
     items: order.items.map(toCheckoutItemView),
     reservations: order.reservations.map(toCheckoutReservationView),
     createdAt: order.createdAt.toISOString(),

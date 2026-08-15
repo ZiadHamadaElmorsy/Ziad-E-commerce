@@ -61,13 +61,17 @@ export class InventoryService {
    * Returns the current inventory state. A variant outside the current store
    * or a variant that has never been initialized (no inventory row yet) fails
    * closed with NOT_FOUND — a missing row is never silently rendered as zero.
+   *
+   * `storeId` is optional: the merchant path resolves it from the trusted
+   * tenant context; the public storefront path passes the store resolved
+   * SERVER-SIDE by the StorefrontStoreResolver (never client input).
    */
-  async getInventory(variantId: string): Promise<InventoryView> {
-    const storeId = requireStoreId(this.requestContext);
+  async getInventory(variantId: string, storeId?: string): Promise<InventoryView> {
+    const resolvedStoreId = storeId ?? requireStoreId(this.requestContext);
 
-    await this.requireVariantInStore(storeId, variantId);
+    await this.requireVariantInStore(resolvedStoreId, variantId);
 
-    const inventory = await this.inventory.findByVariant(storeId, variantId);
+    const inventory = await this.inventory.findByVariant(resolvedStoreId, variantId);
     if (!inventory) {
       throw new NotFoundError('No inventory has been set for this variant.');
     }

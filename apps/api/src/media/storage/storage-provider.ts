@@ -14,4 +14,13 @@ export abstract class StorageProvider {
 
   /** Removes the object at `key`. Must treat an already-absent object as success. */
   abstract deleteObject(key: string): Promise<void>;
+
+  /**
+   * Retrieves the binary object at `key`. Used by the PUBLIC storefront media
+   * proxy (GET /api/v1/storefront/media/:mediaId/content): the caller resolves
+   * the media row server-side (store-scoped) BEFORE this is ever called, so a
+   * cross-tenant key can never be requested. MUST throw a safe DomainError on
+   * failure (never leak credentials or internals).
+   */
+  abstract downloadObject(key: string): Promise<Buffer>;
 }

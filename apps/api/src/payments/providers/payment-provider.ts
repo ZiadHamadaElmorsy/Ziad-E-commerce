@@ -35,6 +35,12 @@ export interface InitiatePaymentInput {
   /** ISO 4217 currency (the order's authoritative currency). */
   currency: string;
   billingData?: InitiatePaymentBillingData;
+  /**
+   * Customer-facing return URL (Paymob `redirect_url`) — where Paymob sends
+   * the browser after the payment attempt. Optional; the webhook remains the
+   * authoritative confirmation (DATABASE §16.5/§16.6).
+   */
+  returnUrl?: string;
 }
 
 /** Result of a successful provider initiation (payment session created). */

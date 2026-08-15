@@ -59,16 +59,30 @@ export class PaymentsService {
     private readonly transaction: TransactionService,
   ) {}
 
-  /** POST /orders/:orderId/payments — create + initiate a payment attempt. */
-  async createPayment(orderId: string, idempotencyKey: string | undefined): Promise<PaymentView> {
-    const storeId = requireStoreId(this.requestContext);
+  /**
+   * POST /orders/:orderId/payments — create + initiate a payment attempt.
+   *
+   * `storeId` is optional: the merchant path resolves it from the trusted
+   * tenant context; the public storefront path passes the store resolved
+   * SERVER-SIDE by the StorefrontStoreResolver (never client input).
+   * `options.returnUrl` is the customer-facing redirect after the provider
+   * checkout (built from the storefront origin); the webhook remains
+   * authoritative.
+   */
+  async createPayment(
+    orderId: string,
+    idempotencyKey: string | undefined,
+    storeId?: string,
+    options?: { returnUrl?: string },
+  ): Promise<PaymentView> {
+    const resolvedStoreId = storeId ?? requireStoreId(this.requestContext);
 
     if (!idempotencyKey) {
       throw new ValidationError('The Idempotency-Key header is required for payment initiation.');
     }
 
     // Load the order (store-scoped). Missing/foreign -> NOT_FOUND (no leak).
-    const order = await this.orders.findWithDetails(storeId, orderId);
+    const order = await this.orders.findWithDetails(resolvedStoreId, orderId);
     if (!order) {
       throw new NotFoundError('The order was not found.');
     }
@@ -81,19 +95,19 @@ export class PaymentsService {
     }
 
     // Idempotent replay: the same key returns the original payment result.
-    const existing = await this.payments.findByIdempotencyKey(storeId, idempotencyKey);
+    const existing = await this.payments.findByIdempotencyKey(resolvedStoreId, idempotencyKey);
     if (existing) {
       if (existing.orderId !== orderId) {
         throw new IdempotencyConflictError(
           'This idempotency key was already used for a different order.',
         );
       }
-      return this.toViewWithAttempts(storeId, existing.id);
+      return this.toViewWithAttempts(resolvedStoreId, existing.id);
     }
 
     // After a FAILED payment a new Payment may be created; while any
     // PENDING/PROCESSING/SUCCEEDED payment exists, initiation is blocked.
-    const active = await this.payments.findNonFailedForOrder(storeId, orderId);
+    const active = await this.payments.findNonFailedForOrder(resolvedStoreId, orderId);
     if (active) {
       throw new ConflictError(
         'An active payment already exists for this order. Retry only after it fails.',
@@ -104,9 +118,9 @@ export class PaymentsService {
     // transaction. Any failure rolls back — no orphan payment rows.
     let created: { paymentId: string; attemptId: string };
     try {
-      created = await this.transaction.runWithTenant(storeId, async (tx) => {
+      created = await this.transaction.runWithTenant(resolvedStoreId, async (tx) => {
         const payment = await this.payments.create(tx, {
-          storeId,
+          storeId: resolvedStoreId,
           orderId,
           provider: PAYMOB_PROVIDER,
           amount: order.grandTotal,
@@ -139,40 +153,58 @@ export class PaymentsService {
           phone: order.customerPhone ?? undefined,
           ...this.billingFromShippingSnapshot(order),
         },
+        returnUrl: options?.returnUrl,
       });
 
-      await this.transaction.runWithTenant(storeId, async (tx) => {
+      await this.transaction.runWithTenant(resolvedStoreId, async (tx) => {
         await this.markInitiated(
           tx,
-          storeId,
+          resolvedStoreId,
           created.paymentId,
           created.attemptId,
           initiated.providerReference,
         );
       });
 
-      return this.toViewWithAttempts(storeId, created.paymentId, initiated.providerCheckoutUrl);
+      return this.toViewWithAttempts(
+        resolvedStoreId,
+        created.paymentId,
+        initiated.providerCheckoutUrl,
+      );
     } catch (error) {
-      await this.markInitiationFailed(storeId, created.paymentId, created.attemptId, error);
+      await this.markInitiationFailed(resolvedStoreId, created.paymentId, created.attemptId, error);
       throw mapInitiationError(error);
     }
   }
 
-  /** GET /orders/:orderId/payment — the active (most recent) payment. */
-  async getPayment(orderId: string): Promise<PaymentView> {
-    const storeId = requireStoreId(this.requestContext);
+  /**
+   * Whether the order currently has an active (non-failed) payment. Used by the
+   * WhatsApp fallback: an order that is already being paid online must NOT be
+   * silently switched to WhatsApp (no duplicate/competing payment paths).
+   */
+  async hasActivePayment(orderId: string, storeId: string): Promise<boolean> {
+    const payment = await this.payments.findNonFailedForOrder(storeId, orderId);
+    return payment !== null;
+  }
 
-    const order = await this.orders.findWithDetails(storeId, orderId);
+  /**
+   * GET /orders/:orderId/payment — the active (most recent) payment.
+   * `storeId` is optional (trusted storefront path).
+   */
+  async getPayment(orderId: string, storeId?: string): Promise<PaymentView> {
+    const resolvedStoreId = storeId ?? requireStoreId(this.requestContext);
+
+    const order = await this.orders.findWithDetails(resolvedStoreId, orderId);
     if (!order) {
       throw new NotFoundError('The order was not found.');
     }
 
-    const payment = await this.payments.findLatestForOrder(storeId, orderId);
+    const payment = await this.payments.findLatestForOrder(resolvedStoreId, orderId);
     if (!payment) {
       throw new NotFoundError('No payment exists for this order.');
     }
 
-    return this.toViewWithAttempts(storeId, payment.id);
+    return this.toViewWithAttempts(resolvedStoreId, payment.id);
   }
 
   /** Marks payment + attempt PENDING -> PROCESSING with the provider reference. */

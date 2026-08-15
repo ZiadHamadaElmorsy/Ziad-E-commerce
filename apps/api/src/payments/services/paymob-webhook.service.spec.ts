@@ -335,6 +335,53 @@ describe('PaymobWebhookService', () => {
     });
   });
 
+  describe('cancelled payment', () => {
+    it('never marks the order as paid: a cancelled/declined callback keeps the order PENDING', async () => {
+      withTx();
+      provider.verifyWebhookSignature.mockReturnValue(true);
+      provider.parseWebhookEvent.mockReturnValue({
+        ...successEvent,
+        success: false,
+        failureMessage: 'Transaction cancelled by customer.',
+      });
+      events.create.mockResolvedValue(eventRow);
+      payments.findByGlobalId.mockResolvedValue(paymentRow);
+      payments.transitionStatus.mockResolvedValue({ count: 1 });
+      attempts.findLatestForPayment.mockResolvedValue(attemptRow);
+      attempts.transitionStatus.mockResolvedValue({ count: 1 });
+      reservations.releaseAllForOrderTx.mockResolvedValue({ released: 1 });
+      orders.findWithDetailsTx.mockResolvedValue(orderRow);
+      events.markProcessedTx.mockResolvedValue({ count: 1 });
+
+      const result = await service.processWebhook({});
+
+      expect(result).toEqual({ status: 'processed' });
+      // Payment is FAILED — never SUCCEEDED.
+      expect(payments.transitionStatus).toHaveBeenCalledWith(
+        tx,
+        'store-1',
+        'payment-1',
+        PaymentStatus.PROCESSING,
+        PaymentStatus.FAILED,
+        expect.objectContaining({ failureMessage: 'Transaction cancelled by customer.' }),
+      );
+      // The order is NOT confirmed and reservations are released for retry.
+      expect(orders.transitionStatus).not.toHaveBeenCalled();
+      expect(reservations.consumeAllForOrderTx).not.toHaveBeenCalled();
+      expect(reservations.releaseAllForOrderTx).toHaveBeenCalledWith(tx, 'store-1', 'order-1');
+      // A replay of the same cancelled callback is a dedup no-op (no new effects).
+      events.create.mockRejectedValue(prismaUniqueError());
+      events.findByProviderEventId.mockResolvedValue({
+        ...eventRow,
+        processingStatus: EventProcessingStatus.PROCESSED,
+      });
+      const replay = await service.processWebhook({});
+      expect(replay).toEqual({ status: 'already_processed' });
+      expect(payments.transitionStatus).toHaveBeenCalledTimes(1);
+      expect(orders.transitionStatus).not.toHaveBeenCalled();
+    });
+  });
+
   describe('pending transaction', () => {
     it('marks the event PROCESSED without terminal transitions', async () => {
       withTx();

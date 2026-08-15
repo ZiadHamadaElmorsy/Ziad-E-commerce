@@ -107,6 +107,7 @@ describe('Phase 15 — System integration (e2e)', () => {
     storeMembership: { findMany: jest.fn() },
     subscription: { findUnique: jest.fn() },
     store: { findUnique: jest.fn() },
+    storeSettings: { findUnique: jest.fn(), upsert: jest.fn() },
   };
 
   const authProviderStub = {

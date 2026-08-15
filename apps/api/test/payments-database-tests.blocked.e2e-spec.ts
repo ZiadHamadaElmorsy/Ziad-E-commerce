@@ -1,97 +1,129 @@
 /**
- * BLOCKED database-level Payments tests (PHASE 9).
- *
- * These tests require a real PostgreSQL instance with the FINAL schema applied
- * (migration `20260812000000_init`), RLS enabled and Supabase-compatible
- * plumbing. PostgreSQL is NOT available in this environment, so the whole suite
- * is `describe.skip` + `it.todo` — following the exact convention established
- * by the Cart/Inventory/Customer/Checkout/Orders phases.
- *
- * NOTHING in this file is executed; nothing is faked. When a real database is
- * available, convert each `it.todo` into a real assertion and run the suite.
+ * PAYMENTS DATABASE INTEGRATION TESTS — REAL PostgreSQL (Phase 23).
+ * Gated on POSTGRES_RLS_TEST_DATABASE_URL (see docs/RLS-TEST-ENVIRONMENT.md).
  */
-describe('Payments database tests (BLOCKED — PostgreSQL unavailable)', () => {
-  describe.skip('Database / RLS / concurrency behavior', () => {
-    it.todo(
-      'runs a clean migration and applies the FINAL payments/payment_attempts/payment_events schema',
-    );
+import { PrismaClient } from '@prisma/client';
+import {
+  bindTenant,
+  clearTenant,
+  createTestClient,
+  expectPgState,
+  RLS_TEST_DATABASE_URL,
+  seedOrder,
+  seedPayment,
+  seedStore,
+} from './db-helpers';
 
-    it.todo(
-      'payment initiation creates Payment (PENDING) + PaymentAttempt (PENDING) with order-derived amount/currency in one transaction',
-    );
+const describeOrSkip = RLS_TEST_DATABASE_URL ? describe : describe.skip;
 
-    it.todo('rejects a Payment with amount <= 0 (CHECK constraint) and mismatched currency FK');
+describeOrSkip('Payments database integration (real PostgreSQL)', () => {
+  let prisma: PrismaClient;
 
-    it.todo(
-      'enforces payments.idempotency_key UNIQUE(store_id, idempotency_key) — a replayed key never creates a second payment',
-    );
+  beforeAll(async () => {
+    prisma = createTestClient();
+    await prisma.$connect();
+  });
 
-    it.todo(
-      'enforces payment_attempts.idempotency_key UNIQUE(payment_id, idempotency_key) within the parent payment',
-    );
+  afterAll(async () => {
+    await prisma?.$disconnect();
+  });
 
-    it.todo(
-      'enforces provider_reference UNIQUE(provider, provider_reference) — a provider transaction is never reused',
-    );
+  it('payments CHECK (amount > 0) rejects a zero amount', async () => {
+    await prisma
+      .$transaction(async (tx) => {
+        const storeId = await seedStore(tx, 'pay-amt-a', 'Pay Amt A');
+        const orderId = await seedOrder(tx, storeId, 'ORD-2026-000020');
+        await expectPgState(
+          () =>
+            tx.$queryRaw`INSERT INTO "payments" (store_id, order_id, status, provider, amount, currency)
+            VALUES (${storeId}::uuid, ${orderId}::uuid, 'PENDING', 'paymob', 0, 'EGP')`,
+          '23514',
+        );
+        throw new Error('__rollback__');
+      })
+      .catch((e: unknown) =>
+        e instanceof Error && e.message === '__rollback__' ? undefined : Promise.reject(e),
+      );
+  });
 
-    it.todo(
-      'enforces the composite store-scoped FK (payments -> orders) — a payment can never reference an order of another store',
-    );
+  it('payments partial UNIQUE (provider, provider_reference) rejects a duplicate reference', async () => {
+    await prisma
+      .$transaction(async (tx) => {
+        const storeId = await seedStore(tx, 'pay-ref-a', 'Pay Ref A');
+        const orderId = await seedOrder(tx, storeId, 'ORD-2026-000021');
+        await seedPayment(tx, storeId, orderId, 'ref-1');
+        await expectPgState(
+          () =>
+            tx.$queryRaw`INSERT INTO "payments" (store_id, order_id, status, provider, amount, currency, provider_reference)
+            VALUES (${storeId}::uuid, ${orderId}::uuid, 'PENDING', 'paymob', 1000, 'EGP', 'ref-1')`,
+          '23505',
+        );
+        throw new Error('__rollback__');
+      })
+      .catch((e: unknown) =>
+        e instanceof Error && e.message === '__rollback__' ? undefined : Promise.reject(e),
+      );
+  });
 
-    it.todo('enforces RLS tenant isolation for payment reads and status writes');
+  it('payment_events UNIQUE (provider, provider_event_id) dedupes webhook deliveries', async () => {
+    await prisma
+      .$transaction(async (tx) => {
+        const storeId = await seedStore(tx, 'pay-ev-a', 'Pay Ev A');
+        const orderId = await seedOrder(tx, storeId, 'ORD-2026-000022');
+        const paymentId = await seedPayment(tx, storeId, orderId);
+        await tx.$queryRaw`INSERT INTO "payment_events" (
+          store_id, payment_id, provider, provider_event_id, event_type, payload, signature_verified, processing_status
+        ) VALUES (${storeId}::uuid, ${paymentId}::uuid, 'paymob', 'ev-1', 'transaction', '{}'::jsonb, true, 'RECEIVED')`;
+        await expectPgState(
+          () =>
+            tx.$queryRaw`INSERT INTO "payment_events" (
+            store_id, payment_id, provider, provider_event_id, event_type, payload, signature_verified, processing_status
+          ) VALUES (${storeId}::uuid, ${paymentId}::uuid, 'paymob', 'ev-1', 'transaction', '{}'::jsonb, true, 'RECEIVED')`,
+          '23505',
+        );
+        throw new Error('__rollback__');
+      })
+      .catch((e: unknown) =>
+        e instanceof Error && e.message === '__rollback__' ? undefined : Promise.reject(e),
+      );
+  });
 
-    it.todo(
-      'blocks payment initiation while a PENDING/PROCESSING/SUCCEEDED payment exists and allows a new one only after FAILED (§16.4)',
-    );
+  it('a payment can never reference another store order (composite FK)', async () => {
+    await prisma
+      .$transaction(async (tx) => {
+        const storeA = await seedStore(tx, 'pay-fk-a', 'Pay FK A');
+        const storeB = await seedStore(tx, 'pay-fk-b', 'Pay FK B');
+        const orderB = await seedOrder(tx, storeB, 'ORD-2026-000023');
+        await expectPgState(
+          () =>
+            tx.$queryRaw`INSERT INTO "payments" (store_id, order_id, status, provider, amount, currency)
+            VALUES (${storeA}::uuid, ${orderB}::uuid, 'PENDING', 'paymob', 1000, 'EGP')`,
+          '23503',
+        );
+        throw new Error('__rollback__');
+      })
+      .catch((e: unknown) =>
+        e instanceof Error && e.message === '__rollback__' ? undefined : Promise.reject(e),
+      );
+  });
 
-    it.todo(
-      'applies the guarded payment transitions PROCESSING -> SUCCEEDED / PROCESSING -> FAILED exactly once',
-    );
+  it('RLS: Store A cannot read Store B payments', async () => {
+    await prisma
+      .$transaction(async (tx) => {
+        const storeA = await seedStore(tx, 'pay-rls-a', 'Pay RLS A');
+        const storeB = await seedStore(tx, 'pay-rls-b', 'Pay RLS B');
+        const orderB = await seedOrder(tx, storeB, 'ORD-2026-000024');
+        await seedPayment(tx, storeB, orderB);
 
-    it.todo(
-      'payment success consumes reservations ACTIVE -> CONSUMED with on_hand/reserved decrement + CONSUMPTION movement in the SAME transaction',
-    );
-
-    it.todo(
-      'payment success confirms the order PENDING -> CONFIRMED (confirmed_at) in the same transaction',
-    );
-
-    it.todo(
-      'payment failure releases reservations ACTIVE -> RELEASED (reserved decrement + RELEASE movement) and never confirms the order',
-    );
-
-    it.todo(
-      'payment success vs cancellation race: only one of CONSUME/RELEASE applies per reservation (guarded)',
-    );
-
-    it.todo(
-      'a repeated successful webhook does NOT consume inventory twice, decrement reserved twice, or create duplicate movements',
-    );
-
-    it.todo('an already-CONFIRMED order is not transitioned again by a retried success webhook');
-
-    it.todo(
-      'webhook dedup: UNIQUE (provider, provider_event_id) prevents duplicate payment_events rows and a PROCESSED event is not re-processed',
-    );
-
-    it.todo(
-      'an event whose payment cannot be resolved is persisted as ERROR and never confirms an order',
-    );
-
-    it.todo(
-      'payment_events rows with store_id NULL are invisible to tenant RLS policies and become visible only after resolution',
-    );
-
-    it.todo(
-      'webhook processing writes exactly the documented audit rows (payment.succeeded / payment.failed / order.status_changed)',
-    );
-
-    it.todo(
-      'a failed provider initiation marks payment + attempt FAILED (PENDING -> PROCESSING -> FAILED) with failure info',
-    );
-
-    it.todo('enforces CHECK (amount > 0) on payments and payment_attempts');
-
-    it.todo('payment history is immutable: no delete/update of processed payments/attempts/events');
+        await bindTenant(tx, storeA);
+        const foreign = await tx.$queryRaw<{ count: bigint }[]>`
+        SELECT count(*)::bigint AS count FROM "payments" WHERE store_id = ${storeB}::uuid`;
+        expect(Number(foreign[0]?.count ?? 0n)).toBe(0);
+        await clearTenant(tx);
+        throw new Error('__rollback__');
+      })
+      .catch((e: unknown) =>
+        e instanceof Error && e.message === '__rollback__' ? undefined : Promise.reject(e),
+      );
   });
 });

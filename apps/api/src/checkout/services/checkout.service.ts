@@ -1,10 +1,12 @@
 import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import {
   Cart,
   CartStatus,
   Customer,
   InventoryReservation,
   Order,
+  OrderChannel,
   OrderItem,
   OrderStatus,
   Prisma,
@@ -30,6 +32,7 @@ import { InventoryReservationService } from '../../inventory/services/inventory-
 import { CheckoutView, toCheckoutView } from '../checkout.types';
 import { nextOrderNumber } from '../domain/checkout-order-number';
 import { splitCustomerName } from '../domain/checkout-customer-name';
+import { generateOrderLookupToken } from '../domain/order-lookup-token';
 import { isUniqueViolation, mapCheckoutWriteError } from '../domain/checkout-error.mapper';
 import { CheckoutRequestDto } from '../dto/checkout-request.dto';
 import {
@@ -110,26 +113,36 @@ export class CheckoutService {
     private readonly customers: CustomerRepository,
     private readonly orders: OrderRepository,
     private readonly transaction: TransactionService,
+    private readonly config: ConfigService,
   ) {}
 
   /**
    * POST /api/v1/checkout — creates (or idempotently returns) the PENDING
    * order for the guest cart identified by `guestToken`.
+   *
+   * `storeId`/`storeStatus` are optional: the merchant path resolves them from
+   * the trusted tenant context; the public storefront path passes the store
+   * resolved SERVER-SIDE by the StorefrontStoreResolver (which already asserts
+   * ACTIVE + subscription availability) — never from client input.
    */
   async createCheckout(
     dto: CheckoutRequestDto,
     guestToken?: string,
     idempotencyKey?: string,
+    storeId?: string,
+    storeStatus?: StoreStatus,
+    channel: OrderChannel = OrderChannel.ONLINE_PAYMENT,
   ): Promise<CheckoutView> {
-    const storeId = requireStoreId(this.requestContext);
+    const resolvedStoreId = storeId ?? requireStoreId(this.requestContext);
+    const resolvedStoreStatus = storeStatus ?? this.requestContext.getCurrent()?.store?.status;
 
     // Store availability (docs/DOMAIN-MODEL.md §11, docs/MVP-SCOPE.md §16,
     // docs/DATABASE.md §28.1 step 1). The store is the trusted tenant context;
-    // only ACTIVE stores accept checkouts. The subscription access overlay
-    // belongs to the later Subscriptions phase (roadmap §16) and is not
-    // implemented here.
-    const storeStatus = this.requestContext.getCurrent()?.store?.status;
-    if (storeStatus !== StoreStatus.ACTIVE) {
+    // only ACTIVE stores accept checkouts. On the public path the
+    // StorefrontStoreResolver already asserted ACTIVE + subscription
+    // availability, so this is defense in depth. The subscription access
+    // overlay belongs to the later Subscriptions phase (roadmap §16).
+    if (resolvedStoreStatus !== StoreStatus.ACTIVE) {
       throw new ConflictError('The store is not currently available for checkout.');
     }
 
@@ -140,8 +153,15 @@ export class CheckoutService {
     // winner's order instead of retrying.
     for (let attempt = 0; attempt < MAX_CHECKOUT_ATTEMPTS; attempt++) {
       try {
-        const outcome = await this.transaction.runWithTenant(storeId, (tx) =>
-          this.runCheckoutTransaction(tx, storeId, dto, guestToken, idempotencyKey),
+        const outcome = await this.transaction.runWithTenant(resolvedStoreId, (tx) =>
+          this.runCheckoutTransaction(
+            tx,
+            resolvedStoreId,
+            dto,
+            guestToken,
+            idempotencyKey,
+            channel,
+          ),
         );
         return toCheckoutView({
           ...outcome.order,
@@ -154,7 +174,10 @@ export class CheckoutService {
         // UNIQUE collision: if an order already exists for this idempotency
         // key, a concurrent request won — return it (docs/DATABASE.md §27.1).
         if (idempotencyKey) {
-          const existing = await this.orders.findByStoreAndIdempotencyKey(storeId, idempotencyKey);
+          const existing = await this.orders.findByStoreAndIdempotencyKey(
+            resolvedStoreId,
+            idempotencyKey,
+          );
           if (existing) {
             return toCheckoutView(existing);
           }
@@ -177,6 +200,7 @@ export class CheckoutService {
     dto: CheckoutRequestDto,
     guestToken: string | undefined,
     idempotencyKey: string | undefined,
+    channel: OrderChannel,
   ): Promise<{
     order: Order & { items: OrderItem[] };
     reservations: InventoryReservation[];
@@ -240,12 +264,18 @@ export class CheckoutService {
     //    step 3). The atomic guarded increment inside reserveTx is the ONLY
     //    availability decision — never a read-then-write check. Stock is
     //    reserved (not consumed); consumption belongs to the Payment phase.
+    //    Reservations carry a bounded TTL (RESERVATION_TTL_MS) so abandoned
+    //    checkouts cannot hold inventory forever — the Phase 21 expiry sweep
+    //    releases them once expires_at passes (docs/DATABASE.md §14.2).
+    const reservationExpiresAt = new Date(
+      Date.now() + this.reservationTtlMs(),
+    );
     const reserved: InventoryReservation[] = [];
     for (const line of lines) {
       reserved.push(
         await this.reservations.reserveTx(tx, storeId, line.variantId, line.quantity, {
           cartId: cart.id,
-        }),
+        }, reservationExpiresAt),
       );
     }
 
@@ -258,6 +288,7 @@ export class CheckoutService {
       lines,
       subtotal,
       idempotencyKey,
+      channel,
     });
 
     // 9. Link the reservations to the order (docs/DATABASE.md §28.1 step 5) —
@@ -384,6 +415,7 @@ export class CheckoutService {
       lines: CheckoutLine[];
       subtotal: bigint;
       idempotencyKey: string | undefined;
+      channel: OrderChannel;
     },
   ): Promise<Order & { items: OrderItem[] }> {
     // MVP totals: discount/shipping/tax engines are out of scope
@@ -393,6 +425,7 @@ export class CheckoutService {
     const orderData: CreateOrderInput = {
       storeId,
       orderNumber: '',
+      channel: input.channel,
       customerId: input.customer.id,
       status: OrderStatus.PENDING,
       currency: input.cart.currency,
@@ -408,6 +441,9 @@ export class CheckoutService {
       shippingAddressSnapshot: this.buildShippingSnapshot(input.dto.shippingAddress),
       billingAddressSnapshot: Prisma.DbNull,
       idempotencyKey: input.idempotencyKey ?? null,
+      // Phase 23 — a fresh 192-bit lookup token gates PII on the public
+      // storefront order confirmation endpoint (order-lookup-token.ts).
+      lookupToken: generateOrderLookupToken(),
     };
 
     const itemData: CreateOrderItemInput[] = input.lines.map((line) => ({
@@ -436,5 +472,11 @@ export class CheckoutService {
       ...(address.building !== undefined ? { building: address.building } : {}),
       ...(address.apartment !== undefined ? { apartment: address.apartment } : {}),
     };
+  }
+
+  /** Reservation TTL (ms) from the environment (RESERVATION_TTL_MS, default 30m). */
+  private reservationTtlMs(): number {
+    const ttl = this.config.get<number>('expiry.reservationTtlMs');
+    return Number.isInteger(ttl) && (ttl as number) > 0 ? (ttl as number) : 30 * 60 * 1000;
   }
 }

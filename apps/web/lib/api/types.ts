@@ -37,6 +37,66 @@ export interface MeResponse {
   membership: MeMembership | null;
 }
 
+// --- Merchant onboarding (Phase 17) ------------------------------------------
+
+export interface OnboardingUser {
+  id: string;
+  authUserId: string;
+  firstName: string;
+  lastName: string;
+  email: string;
+}
+
+export interface OnboardingMembership {
+  id: string;
+  storeId: string;
+  role: MembershipRole;
+  status: 'ACTIVE' | 'INACTIVE';
+}
+
+export interface OnboardingStatus {
+  user: OnboardingUser | null;
+  store: StoreViewFull | null;
+  membership: OnboardingMembership | null;
+}
+
+export interface CreateMerchantResult {
+  store: StoreViewFull;
+  membership: OnboardingMembership;
+}
+
+export interface CreateMerchantInput {
+  firstName: string;
+  lastName: string;
+  storeName: string;
+  slug?: string;
+  currency?: string;
+}
+
+export interface StoreViewFull {
+  id: string;
+  name: string;
+  slug: string;
+  description: string | null;
+  status: StoreStatus;
+  currency: string;
+  timezone: string;
+}
+
+// --- Theme (docs/API-SPEC.md §28) ---------------------------------------------
+
+export interface ThemeView {
+  id: string;
+  logoMediaId: string | null;
+  config: Record<string, unknown>;
+}
+
+export interface UpdateThemeInput {
+  primaryColor?: string;
+  fontFamily?: string;
+  logoMediaId?: string;
+}
+
 // --- Catalog -----------------------------------------------------------------
 
 export type ProductStatus = 'DRAFT' | 'ACTIVE' | 'ARCHIVED';
@@ -154,9 +214,13 @@ export interface ListCategoriesParams {
 export type OrderStatus =
   'PENDING' | 'CONFIRMED' | 'PROCESSING' | 'SHIPPED' | 'DELIVERED' | 'CANCELLED';
 
+/** Order acquisition/payment channel (Phase 22). */
+export type OrderChannel = 'ONLINE_PAYMENT' | 'WHATSAPP';
+
 export interface OrderSummaryView {
   id: string;
   orderNumber: string;
+  channel: OrderChannel;
   status: OrderStatus;
   currency: string;
   grandTotal: number;
@@ -189,6 +253,7 @@ export interface OrderReservationView {
 export interface OrderView {
   id: string;
   orderNumber: string;
+  channel: OrderChannel;
   status: OrderStatus;
   currency: string;
   subtotal: number;

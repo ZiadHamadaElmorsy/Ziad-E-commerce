@@ -290,6 +290,14 @@ export default function OrderDetailsPage() {
                 </dd>
               </div>
               <div>
+                <dt>{t('orders.details.channel')}</dt>
+                <dd data-testid="order-detail-channel">
+                  {order.channel === 'WHATSAPP'
+                    ? t('orders.channel.WHATSAPP')
+                    : t('orders.channel.ONLINE_PAYMENT')}
+                </dd>
+              </div>
+              <div>
                 <dt>{t('orders.details.placedAt')}</dt>
                 <dd>{formatDate(order.createdAt)}</dd>
               </div>
@@ -362,6 +370,12 @@ export default function OrderDetailsPage() {
       <Card title={t('orders.details.paymentTitle')} description={t('orders.details.paymentDesc')}>
         {!paymentLoaded ? (
           <LoadingBlock label={t('common.loading')} />
+        ) : payment === null && order.channel === 'WHATSAPP' ? (
+          // Phase 22 — WhatsApp orders are paid manually: no online payment can
+          // be initiated for them; the merchant confirms + collects payment.
+          <p className="card__muted" data-testid="whatsapp-unpaid-note">
+            {t('orders.details.whatsappUnpaid')}
+          </p>
         ) : payment === null ? (
           <>
             <p className="card__muted">{t('orders.details.noPayment')}</p>

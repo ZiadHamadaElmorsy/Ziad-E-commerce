@@ -1,5 +1,5 @@
 import { ValidationError } from '../../common/errors/domain-exceptions';
-import { assertValidStoreSlug, normalizeStoreSlug } from './store-slug';
+import { assertValidStoreSlug, generateStoreSlug, normalizeStoreSlug } from './store-slug';
 
 describe('store-slug rule', () => {
   it('normalizes case and whitespace', () => {
@@ -20,5 +20,19 @@ describe('store-slug rule', () => {
 
   it('accepts uppercase input after normalization', () => {
     expect(() => assertValidStoreSlug('  UPPER  ')).not.toThrow();
+  });
+});
+
+describe('generateStoreSlug (Phase 17 onboarding)', () => {
+  it('derives a URL-safe slug from a store name', () => {
+    expect(generateStoreSlug('Ziad Boutique')).toBe('ziad-boutique');
+    expect(generateStoreSlug('  My Store!! ')).toBe('my-store');
+    expect(generateStoreSlug('قهوة الصباح')).toBe('');
+  });
+
+  it('caps the generated slug at the DNS label limit (63)', () => {
+    const long = 'a'.repeat(80);
+    expect(generateStoreSlug(long).length).toBe(63);
+    expect(() => assertValidStoreSlug(generateStoreSlug(long))).not.toThrow();
   });
 });

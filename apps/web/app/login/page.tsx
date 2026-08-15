@@ -4,6 +4,7 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import { useI18n } from '@/lib/i18n/i18n-context';
 import { AuthProvider, useAuth } from '@/lib/auth/auth-context';
+import { merchantHomePath } from '@/lib/auth/merchant-route';
 import { Button } from '@/components/ui/Button';
 import { Field, Input } from '@/components/ui/FormControls';
 import { LanguageSwitcher } from '@/components/ui/LanguageSwitcher';
@@ -11,7 +12,7 @@ import { isEmail } from '@/lib/utils';
 
 /** Login form (rendered inside AuthProvider so it can react to sessions). */
 function LoginForm() {
-  const { status, signIn } = useAuth();
+  const { status, store, signIn } = useAuth();
   const { t } = useI18n();
   const router = useRouter();
 
@@ -22,12 +23,14 @@ function LoginForm() {
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  // Already authenticated -> straight to the dashboard.
+  // Already authenticated -> the merchant home (dashboard when a store exists,
+  // onboarding otherwise) via the single routing source of truth. Routing
+  // directly to onboarding avoids a /dashboard -> /onboarding bounce.
   useEffect(() => {
     if (status === 'authenticated') {
-      router.replace('/dashboard');
+      router.replace(merchantHomePath(store));
     }
-  }, [status, router]);
+  }, [status, store, router]);
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();

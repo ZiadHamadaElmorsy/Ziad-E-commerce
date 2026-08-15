@@ -159,6 +159,7 @@ export default function OrdersPage() {
                   <th>{t('orders.table.order')}</th>
                   <th>{t('orders.table.date')}</th>
                   <th>{t('orders.table.customer')}</th>
+                  <th>{t('orders.details.channel')}</th>
                   <th>{t('orders.table.status')}</th>
                   <th>{t('orders.table.total')}</th>
                   <th className="table__actions-head">{t('common.actions')}</th>
@@ -174,6 +175,18 @@ export default function OrdersPage() {
                     </td>
                     <td>{formatDate(order.createdAt)}</td>
                     <td>{order.customerEmail ?? order.customerPhone ?? '—'}</td>
+                    <td>
+                      <span
+                        className={
+                          order.channel === 'WHATSAPP' ? 'badge badge--whatsapp' : 'badge'
+                        }
+                        data-testid={`order-channel-${order.id}`}
+                      >
+                        {order.channel === 'WHATSAPP'
+                          ? t('orders.channel.WHATSAPP')
+                          : t('orders.channel.ONLINE_PAYMENT')}
+                      </span>
+                    </td>
                     <td>
                       <StatusBadge status={order.status} />
                     </td>

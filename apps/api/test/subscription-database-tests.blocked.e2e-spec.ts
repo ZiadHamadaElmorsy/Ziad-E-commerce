@@ -1,75 +1,82 @@
 /**
- * BLOCKED database-level Subscription tests (PHASE 14).
- *
- * The Subscription persistence contract is defined in DATABASE.md §7.4/§9/§10/
- * §12/§20/§25/§29 and shipped by the initial migration:
- *   - subscriptions (status subscription_status DEFAULT 'TRIAL'; trial_started_at;
- *     trial_ends_at; activated_at; expires_at)
- *   - store_id UNIQUE (1:1 with Store) — `subscriptions_store_id_key`
- *   - status index for expiry sweeps / access-overlay checks
- *   - store_id FK stores ON DELETE RESTRICT
- *   - `member_subscription_select` RLS policy (members may read their own store's
- *     subscription; writes run through the service role)
- *   - application-enforced lifecycle (TRIAL -> ACTIVE, TRIAL -> EXPIRED,
- *     ACTIVE -> EXPIRED, EXPIRED -> ACTIVE) — the DB constrains enum membership
- *   - subscription rows are retained (delete/retention rules §25.1)
- *   - "No automatic deletion of commerce data" applies to subscription expiry
- *
- * These tests require a real PostgreSQL instance with the FINAL schema applied
- * (migration `20260812000000_init`), RLS enabled and Supabase-compatible
- * plumbing (anon / authenticated roles). PostgreSQL is NOT available in this
- * environment, so the whole suite is `describe.skip` + `it.todo` — following
- * the exact convention established by every prior phase.
- *
- * NOTHING in this file is executed; nothing is faked. When a real database is
- * available, convert each `it.todo` into a real assertion and run the suite.
+ * SUBSCRIPTION DATABASE INTEGRATION TESTS — REAL PostgreSQL (Phase 23).
+ * Gated on POSTGRES_RLS_TEST_DATABASE_URL (see docs/RLS-TEST-ENVIRONMENT.md).
  */
-describe('Subscription database tests (BLOCKED — PostgreSQL unavailable)', () => {
-  describe.skip('Database / RLS / Subscription behavior', () => {
-    it.todo('subscriptions.store_id is UNIQUE — a Store can have exactly one subscription row');
+import { PrismaClient } from '@prisma/client';
+import {
+  bindTenant,
+  clearTenant,
+  createTestClient,
+  expectPgState,
+  RLS_TEST_DATABASE_URL,
+  seedStore,
+} from './db-helpers';
 
-    it.todo(
-      'subscription_status enum rejects an unknown status (no PAST_DUE / CANCELLED / SUSPENDED)',
-    );
+const describeOrSkip = RLS_TEST_DATABASE_URL ? describe : describe.skip;
 
-    it.todo('subscriptions.status DEFAULT is TRIAL for a newly inserted row');
+describeOrSkip('Subscription database integration (real PostgreSQL)', () => {
+  let prisma: PrismaClient;
 
-    it.todo(
-      'subscriptions.store_id FK RESTRICT blocks deleting a Store that owns a subscription row',
-    );
+  beforeAll(async () => {
+    prisma = createTestClient();
+    await prisma.$connect();
+  });
 
-    it.todo(
-      'RLS: a merchant sees ONLY their own store subscription row (member_subscription_select)',
-    );
+  afterAll(async () => {
+    await prisma?.$disconnect();
+  });
 
-    it.todo(
-      'RLS: a merchant cannot read another store subscription row (no cross-tenant existence leak)',
-    );
+  it('subscriptions UNIQUE (store_id) allows exactly one subscription per store', async () => {
+    await prisma
+      .$transaction(async (tx) => {
+        const storeId = await seedStore(tx, 'sub-uniq-a', 'Sub Uniq A');
+        await tx.$queryRaw`INSERT INTO "subscriptions" (
+          store_id, status, trial_started_at, trial_ends_at
+        ) VALUES (${storeId}::uuid, 'TRIAL', now(), now() + interval '14 days')`;
+        await expectPgState(
+          () =>
+            tx.$queryRaw`INSERT INTO "subscriptions" (
+            store_id, status, trial_started_at, trial_ends_at
+          ) VALUES (${storeId}::uuid, 'TRIAL', now(), now() + interval '14 days')`,
+          '23505',
+        );
+        throw new Error('__rollback__');
+      })
+      .catch((e: unknown) =>
+        e instanceof Error && e.message === '__rollback__' ? undefined : Promise.reject(e),
+      );
+  });
 
-    it.todo(
-      'RLS: the authenticated role cannot INSERT/UPDATE subscriptions (writes run through the service role)',
-    );
+  it('RLS: a member sees only their own store subscription', async () => {
+    await prisma
+      .$transaction(async (tx) => {
+        const storeA = await seedStore(tx, 'sub-rls-a', 'Sub RLS A');
+        const storeB = await seedStore(tx, 'sub-rls-b', 'Sub RLS B');
+        await tx.$queryRaw`INSERT INTO "subscriptions" (store_id, status, trial_started_at, trial_ends_at)
+        VALUES (${storeA}::uuid, 'TRIAL', now(), now() + interval '14 days')`;
+        await tx.$queryRaw`INSERT INTO "subscriptions" (store_id, status, trial_started_at, trial_ends_at)
+        VALUES (${storeB}::uuid, 'TRIAL', now(), now() + interval '14 days')`;
+        // The member-scoped policy resolves the user through the membership
+        // subquery (auth.uid() fallback = app.current_user_id), so the probe
+        // seeds a member of store A and binds that user context.
+        await tx.$queryRaw`INSERT INTO "users" (id, auth_user_id, email, first_name, last_name)
+        VALUES ('aaaa0000-0000-0000-0000-000000000001'::uuid, '10000000-0000-0000-0000-000000000201'::uuid, 'sub@example.com', 'S', 'U')`;
+        await tx.$queryRaw`INSERT INTO "store_memberships" (store_id, user_id, role, status)
+        VALUES (${storeA}::uuid, 'aaaa0000-0000-0000-0000-000000000001'::uuid, 'OWNER', 'ACTIVE')`;
 
-    it.todo(
-      'the status index supports expiry sweeps / access-overlay checks on subscriptions.status',
-    );
-
-    it.todo(
-      'lazy expiry is concurrency-safe: two concurrent TRIAL->EXPIRED guarded updates affect exactly one row',
-    );
-
-    it.todo(
-      'the Store + OWNER membership + TRIAL subscription creation rolls back atomically on failure',
-    );
-
-    it.todo('subscription rows are retained — there is no documented DELETE path');
-
-    it.todo(
-      'expiry never deletes commerce data: an EXPIRED subscription leaves all store data intact',
-    );
-
-    it.todo(
-      'the service role can transition subscription status (TRIAL->ACTIVE, EXPIRED->ACTIVE reactivation)',
-    );
+        await bindTenant(tx, storeA);
+        await tx.$executeRaw`SELECT set_config('app.current_user_id', 'aaaa0000-0000-0000-0000-000000000001', true)`;
+        const mySubs = await tx.$queryRaw<{ count: bigint }[]>`
+        SELECT count(*)::bigint AS count FROM "subscriptions" WHERE store_id = ${storeA}::uuid`;
+        expect(Number(mySubs[0]?.count ?? 0n)).toBe(1);
+        const foreignSubs = await tx.$queryRaw<{ count: bigint }[]>`
+        SELECT count(*)::bigint AS count FROM "subscriptions" WHERE store_id = ${storeB}::uuid`;
+        expect(Number(foreignSubs[0]?.count ?? 0n)).toBe(0);
+        await clearTenant(tx);
+        throw new Error('__rollback__');
+      })
+      .catch((e: unknown) =>
+        e instanceof Error && e.message === '__rollback__' ? undefined : Promise.reject(e),
+      );
   });
 });

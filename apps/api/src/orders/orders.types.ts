@@ -1,6 +1,7 @@
 import {
   InventoryReservation,
   Order,
+  OrderChannel,
   OrderItem,
   OrderStatus,
   ReservationStatus,
@@ -52,6 +53,8 @@ export interface OrderReservationView {
 export interface OrderView {
   id: string;
   orderNumber: string;
+  /** Acquisition/payment channel (ONLINE_PAYMENT | WHATSAPP) — Phase 22. */
+  channel: OrderChannel;
   status: OrderStatus;
   currency: string;
   subtotal: number;
@@ -76,6 +79,8 @@ export interface OrderView {
 export interface OrderSummaryView {
   id: string;
   orderNumber: string;
+  /** Acquisition/payment channel (ONLINE_PAYMENT | WHATSAPP) — Phase 22. */
+  channel: OrderChannel;
   status: OrderStatus;
   currency: string;
   grandTotal: number;
@@ -111,6 +116,7 @@ export function toOrderView(order: OrderWithDetails): OrderView {
   return {
     id: order.id,
     orderNumber: order.orderNumber,
+    channel: order.channel,
     status: order.status,
     currency: order.currency,
     subtotal: Number(order.subtotal),
@@ -136,6 +142,7 @@ export function toOrderSummaryView(order: Order): OrderSummaryView {
   return {
     id: order.id,
     orderNumber: order.orderNumber,
+    channel: order.channel,
     status: order.status,
     currency: order.currency,
     grandTotal: Number(order.grandTotal),

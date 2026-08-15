@@ -47,5 +47,9 @@ import { CmsAuditService } from './services/cms-audit.service';
     NavigationRepository,
     ThemeRepository,
   ],
+  // ThemeService + NavigationService are exported for the public storefront
+  // theme/navigation endpoints (Phase 19): the storefront commerce service
+  // passes the server-side resolved store id (never client input).
+  exports: [ThemeService, NavigationService],
 })
 export class CmsModule {}

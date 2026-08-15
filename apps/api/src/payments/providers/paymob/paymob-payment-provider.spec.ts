@@ -12,8 +12,9 @@ describe('PaymobPaymentProvider', () => {
     apiUrl: 'https://accept.paymob.test',
     apiKey: 'api-key',
     integrationId: '424242',
-    iframeId: '7777',
+    publicKey: 'pub-key',
     hmacSecret: 'hmac-secret',
+    webhookUrl: 'https://api.example.com/api/v1/webhooks/paymob',
   };
 
   beforeEach(() => {
@@ -28,6 +29,49 @@ describe('PaymobPaymentProvider', () => {
 
   afterEach(() => {
     fetchMock.mockRestore();
+  });
+
+  describe('onModuleInit diagnostics (Phase 21/22)', () => {
+    it('warns with the exact missing variable names when credentials are absent', () => {
+      configService.get.mockReturnValue({ apiUrl: 'https://accept.paymob.com' });
+      const warnSpy = jest.spyOn(provider['logger'], 'warn').mockImplementation(() => undefined);
+
+      provider.onModuleInit();
+
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('PAYMOB_API_KEY'));
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('PAYMOB_INTEGRATION_ID'));
+      // Phase 22: iframe id is NOT required anymore; public key is.
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('PAYMOB_PUBLIC_KEY'));
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('PAYMOB_HMAC_SECRET'));
+      warnSpy.mockRestore();
+    });
+
+    it('logs configured when every credential is present', () => {
+      const logSpy = jest.spyOn(provider['logger'], 'log').mockImplementation(() => undefined);
+
+      provider.onModuleInit();
+
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('configured'));
+      logSpy.mockRestore();
+    });
+
+    it('warns when PAYMOB_API_KEY is a legacy JWT that the Intention API rejects (Phase 24)', () => {
+      configService.get.mockReturnValue({
+        ...paymobConfig,
+        apiKey: 'ZXlKaGJHY2lPaUpJVXpVeE1pSXNJblI1Y0NJNklrcFhWQ0o5',
+      });
+      const warnSpy = jest.spyOn(provider['logger'], 'warn').mockImplementation(() => undefined);
+
+      provider.onModuleInit();
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('LEGACY JWT'),
+      );
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('egy_sk_test_'),
+      );
+      warnSpy.mockRestore();
+    });
   });
 
   describe('initiatePayment', () => {
@@ -53,64 +97,122 @@ describe('PaymobPaymentProvider', () => {
       expect(fetchMock).not.toHaveBeenCalled();
     });
 
-    it('performs auth -> order register -> payment key and returns the iframe URL', async () => {
-      fetchMock
-        .mockResolvedValueOnce({
-          ok: true,
-          json: async () => ({ token: 'auth-token' }),
-        } as Response)
-        .mockResolvedValueOnce({
-          ok: true,
-          json: async () => ({ id: 112233, merchant_order_id: 'payment-1' }),
-        } as Response)
-        .mockResolvedValueOnce({
-          ok: true,
-          json: async () => ({ token: 'payment-key-token' }),
-        } as Response);
+    it('fails closed when the public key is missing (Intention flow requirement)', async () => {
+      configService.get.mockReturnValue({
+        apiUrl: 'https://accept.paymob.test',
+        apiKey: 'api-key',
+        integrationId: '424242',
+        hmacSecret: 'hmac-secret',
+      });
+
+      await expect(provider.initiatePayment(input)).rejects.toBeInstanceOf(ConflictError);
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('creates an Intention and returns the Unified Checkout URL (Phase 22/24)', async () => {
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ id: 556677, client_secret: 'sec_client_123' }),
+      } as Response);
+
+      const result = await provider.initiatePayment({ ...input, returnUrl: 'https://store.example.com/return' });
+
+      // A single Intention API call to /v1/intention with the secret key in
+      // the Authorization header (current contract).
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fetchMock).toHaveBeenCalledWith(
+        'https://accept.paymob.test/v1/intention',
+        expect.objectContaining({
+          method: 'POST',
+          headers: expect.objectContaining({
+            'Content-Type': 'application/json',
+            Authorization: 'Bearer api-key',
+          }),
+          body: expect.stringContaining('"special_reference":"payment-1"'),
+        }),
+      );
+
+      const sentBody = JSON.parse(
+        (fetchMock.mock.calls[0][1] as { body: string }).body,
+      ) as Record<string, unknown>;
+
+      expect(sentBody).toMatchObject({
+        amount: 1000,
+        currency: 'EGP',
+        payment_methods: [424242],
+        special_reference: 'payment-1',
+        notification_url: 'https://api.example.com/api/v1/webhooks/paymob',
+        redirection_url: 'https://store.example.com/return',
+        expiration: 600,
+      });
+      // The secret is carried ONLY in the Authorization header, never in the body.
+      expect(sentBody.api_key).toBeUndefined();
+      expect(sentBody.redirect_url).toBeUndefined();
+      expect(sentBody.expires_in).toBeUndefined();
+      expect((sentBody.billing_data as Record<string, string>).email).toBe('a@b.com');
+
+      // providerReference = intention id; checkout URL carries client_secret.
+      expect(result.providerReference).toBe('556677');
+      expect(result.providerCheckoutUrl).toBe(
+        'https://accept.paymob.test/unifiedcheckout/?publicKey=pub-key&clientSecret=sec_client_123',
+      );
+    });
+
+    it('supports the documented Token auth scheme via PAYMOB_AUTH_SCHEME', async () => {
+      configService.get.mockReturnValue({ ...paymobConfig, authScheme: 'Token' });
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ id: 1, client_secret: 'sec_client_token' }),
+      } as Response);
 
       const result = await provider.initiatePayment(input);
 
-      expect(fetchMock).toHaveBeenNthCalledWith(
-        1,
-        'https://accept.paymob.test/api/auth/tokens',
-        expect.objectContaining({ body: JSON.stringify({ api_key: 'api-key' }) }),
+      expect(fetchMock).toHaveBeenCalledWith(
+        'https://accept.paymob.test/v1/intention',
+        expect.objectContaining({
+          headers: expect.objectContaining({ Authorization: 'Token api-key' }),
+        }),
       );
-      // Order registration: merchant_order_id is the globally-unique payment id
-      // and amount stays integer minor units (never a float).
-      const registerCall = fetchMock.mock.calls[1];
-      expect(registerCall[0]).toBe('https://accept.paymob.test/api/ecommerce/orders/register');
-      const registerBody = JSON.parse(String(registerCall[1].body));
-      expect(registerBody).toMatchObject({
-        auth_token: 'auth-token',
-        amount_cents: '1000',
-        currency: 'EGP',
-        merchant_order_id: 'payment-1',
-      });
-      // Payment key request carries the integration id + billing data.
-      const keyCall = fetchMock.mock.calls[2];
-      expect(keyCall[0]).toBe('https://accept.paymob.test/api/acceptance/payment_keys');
-      const keyBody = JSON.parse(String(keyCall[1].body));
-      expect(keyBody.integration_id).toBe('424242');
-      expect(keyBody.billing_data.email).toBe('a@b.com');
-      expect(keyBody.billing_data.state).toBe('Gharbia');
-
-      expect(result).toEqual({
-        providerReference: '112233',
-        providerCheckoutUrl:
-          'https://accept.paymob.test/api/acceptance/iframes/7777?payment_token=payment-key-token',
-      });
+      expect(result.providerCheckoutUrl).toContain('clientSecret=sec_client_token');
     });
 
-    it('throws a safe ConflictError when a provider call returns an HTTP error', async () => {
-      fetchMock.mockResolvedValueOnce({ ok: false, status: 401 } as Response);
+    it('falls back to client_secret as the provider reference when no intention id is returned', async () => {
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ client_secret: 'sec_client_456' }),
+      } as Response);
 
-      await expect(provider.initiatePayment(input)).rejects.toThrow('Payment initiation failed.');
+      const result = await provider.initiatePayment(input);
+
+      expect(result.providerReference).toBe('sec_client_456');
+      expect(result.providerCheckoutUrl).toContain('clientSecret=sec_client_456');
     });
 
-    it('throws a safe ConflictError when a required token is missing', async () => {
-      fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({}) } as Response);
+    it('fails closed when the Intention response lacks a client_secret', async () => {
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ id: 1 }),
+      } as Response);
 
       await expect(provider.initiatePayment(input)).rejects.toBeInstanceOf(ConflictError);
+    });
+
+    it('fails closed when the Intention API call fails', async () => {
+      fetchMock.mockResolvedValueOnce({ ok: false, status: 400 } as Response);
+
+      await expect(provider.initiatePayment(input)).rejects.toBeInstanceOf(ConflictError);
+    });
+
+    it('logs the legacy-key remediation hint on a 401 (Intention auth rejection)', async () => {
+      fetchMock.mockResolvedValueOnce({ ok: false, status: 401 } as Response);
+      const warnSpy = jest.spyOn(provider['logger'], 'warn').mockImplementation(() => undefined);
+
+      await expect(provider.initiatePayment(input)).rejects.toBeInstanceOf(ConflictError);
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('egy_sk_test_'),
+      );
+      warnSpy.mockRestore();
     });
   });
 
@@ -157,6 +259,31 @@ describe('PaymobPaymentProvider', () => {
     it('fails closed when the HMAC secret is unconfigured', () => {
       configService.get.mockReturnValue({ ...paymobConfig, hmacSecret: undefined });
       expect(provider.verifyWebhookSignature(signedPayload())).toBe(false);
+    });
+
+    it('accepts a valid signature computed with the CURRENT 20-field list (Phase 24)', () => {
+      const obj = {
+        amount_cents: 1000,
+        created_at: '2026-08-12T10:00:00.000000',
+        currency: 'EGP',
+        error_occured: false,
+        has_parent_transaction: false,
+        id: 88131,
+        integration_id: 424242,
+        is_3d_secure: false,
+        is_auth: false,
+        is_capture: false,
+        is_refunded: false,
+        is_standalone_payment: false,
+        is_voided: false,
+        order: { id: 112233, merchant_order_id: 'payment-1', amount_cents: 1000 },
+        owner: 3,
+        pending: false,
+        source_data: { pan: '5123', sub_type: 'MasterCard', type: 'card' },
+        success: true,
+      };
+      const hmac = signCurrent(obj, 'hmac-secret');
+      expect(provider.verifyWebhookSignature({ type: 'transaction', obj, hmac })).toBe(true);
     });
 
     it('rejects a forged/tampered callback', () => {
@@ -251,6 +378,39 @@ function sign(obj: Record<string, unknown>, secret: string): string {
     'success',
     'token',
     'transaction_id',
+  ] as const;
+
+  let raw = '';
+  for (const field of fields) {
+    raw += resolveField(obj, field);
+  }
+  raw += secret;
+  return createHmac('sha512', secret).update(raw, 'utf8').digest('hex');
+}
+
+/** Signs with the CURRENT (20-field) Paymob concatenation order (Phase 24). */
+function signCurrent(obj: Record<string, unknown>, secret: string): string {
+  const fields = [
+    'amount_cents',
+    'created_at',
+    'currency',
+    'error_occured',
+    'has_parent_transaction',
+    'id',
+    'integration_id',
+    'is_3d_secure',
+    'is_auth',
+    'is_capture',
+    'is_refunded',
+    'is_standalone_payment',
+    'is_voided',
+    'order.id',
+    'owner',
+    'pending',
+    'source_data.pan',
+    'source_data.sub_type',
+    'source_data.type',
+    'success',
   ] as const;
 
   let raw = '';

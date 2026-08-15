@@ -1,6 +1,6 @@
 import { INestApplication } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
-import { CartStatus, OrderStatus, Prisma, ProductStatus, VariantStatus } from '@prisma/client';
+import { CartStatus, OrderChannel, OrderStatus, Prisma, ProductStatus, VariantStatus } from '@prisma/client';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { setupApp } from '../src/app.setup';
@@ -145,6 +145,7 @@ describe('Checkout (e2e)', () => {
     id: 'order-1',
     storeId: 'store-1',
     orderNumber: 'ORD-2026-000001',
+    channel: OrderChannel.ONLINE_PAYMENT,
     customerId: 'customer-1',
     status: OrderStatus.PENDING,
     currency: 'EGP',
@@ -158,6 +159,7 @@ describe('Checkout (e2e)', () => {
     shippingAddressSnapshot: { governorate: 'Gharbia', city: 'Tanta', addressLine: 'Street 5' },
     billingAddressSnapshot: null,
     idempotencyKey: 'key-1',
+    lookupToken: 'lookup-token-1',
     createdAt: new Date('2026-08-12T00:00:00Z'),
     updatedAt: new Date('2026-08-12T00:00:00Z'),
     confirmedAt: null,
@@ -382,6 +384,7 @@ describe('Checkout (e2e)', () => {
       expect(res.body.data).toEqual({
         orderId: 'order-1',
         orderNumber: 'ORD-2026-000001',
+        channel: 'ONLINE_PAYMENT',
         status: 'PENDING',
         currency: 'EGP',
         subtotal: 1000,
@@ -392,6 +395,7 @@ describe('Checkout (e2e)', () => {
         customerId: 'customer-1',
         customerEmail: 'ahmed@example.com',
         customerPhone: '01000000000',
+        lookupToken: 'lookup-token-1',
         items: [
           {
             productId: 'product-1',

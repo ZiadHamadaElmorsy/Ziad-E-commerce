@@ -22,6 +22,7 @@ describe('VariantsService', () => {
     updateStatus: jest.Mock;
     findById: jest.Mock;
     findByProductId: jest.Mock;
+    findByStoreAndSku: jest.Mock;
     countByProductId: jest.Mock;
   };
   let transaction: { run: jest.Mock; runWithTenant: jest.Mock };
@@ -61,6 +62,7 @@ describe('VariantsService', () => {
       updateStatus: jest.fn(),
       findById: jest.fn(),
       findByProductId: jest.fn(),
+      findByStoreAndSku: jest.fn(),
       countByProductId: jest.fn(),
     };
     transaction = { run: jest.fn(), runWithTenant: jest.fn() };
@@ -68,6 +70,9 @@ describe('VariantsService', () => {
     transaction.runWithTenant.mockImplementation(
       async (_storeId: string, work: (tx: unknown) => Promise<unknown>) => work({}),
     );
+    // Default: no existing variant holds the SKU (the Phase 24 pre-check then
+    // proceeds to the insert). Individual tests override for the conflict case.
+    variants.findByStoreAndSku.mockResolvedValue(null);
 
     service = new VariantsService(
       requestContext as unknown as RequestContextService,
@@ -148,6 +153,7 @@ describe('VariantsService', () => {
     it('maps a store-scoped duplicate SKU (P2002) to CONFLICT', async () => {
       withTenant();
       products.findById.mockResolvedValue(productRow);
+      variants.findByStoreAndSku.mockResolvedValue(null);
       variants.create.mockRejectedValue(
         new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
           code: 'P2002',
@@ -157,6 +163,21 @@ describe('VariantsService', () => {
       );
 
       await expect(service.create('product-1', createDto())).rejects.toBeInstanceOf(ConflictError);
+    });
+
+    it('pre-checks SKU uniqueness within the store and returns the precise conflict (Phase 24)', async () => {
+      withTenant();
+      products.findById.mockResolvedValue(productRow);
+      // Under RLS enforcement PostgreSQL suppresses the unique-violation DETAIL
+      // (meta.target=null), so the tenant-bound pre-check is what surfaces the
+      // precise message; the insert must never run.
+      variants.findByStoreAndSku.mockResolvedValue({ ...variantRow, sku: 'TS-BLK-M' });
+
+      await expect(service.create('product-1', createDto())).rejects.toMatchObject({
+        name: 'ConflictError',
+        message: 'A variant with this SKU already exists in this store.',
+      });
+      expect(variants.create).not.toHaveBeenCalled();
     });
 
     it('fails with TENANT_CONTEXT_REQUIRED when no tenant context is present', async () => {

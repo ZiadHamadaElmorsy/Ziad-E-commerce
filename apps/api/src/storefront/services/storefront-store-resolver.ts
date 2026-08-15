@@ -5,6 +5,7 @@ import { NotFoundError } from '../../common/errors/domain-exceptions';
 import { SubscriptionService } from '../../subscription/services/subscription.service';
 import { StorefrontRepository } from '../repositories/storefront.repository';
 import { assertStorefrontAvailable } from '../domain/storefront-availability';
+import { storefrontSlugFromHost } from '../domain/storefront-host';
 
 /** Header carrying the public storefront slug (works in any environment). */
 export const STOREFRONT_SLUG_HEADER = 'x-storefront-slug';
@@ -31,7 +32,10 @@ export interface StorefrontResolvedStore {
  *
  *   1. `X-Storefront-Slug` header (explicit, deterministic in any environment).
  *   2. Host-header subdomain: `my-store.platform-domain.com` -> slug `my-store`
- *      when the host ends with the configured storefront platform domain.
+ *      when the host ends with the configured storefront platform domain
+ *      (Phase 21: STOREFRONT_HOST_RESOLUTION_ENABLED, default on in
+ *      production). Root domain / www / localhost / foreign hosts are never
+ *      treated as storefronts.
  *
  * Resolution is fail-closed: an unknown slug, a missing host header, or a
  * non-ACTIVE store all surface as NOT_FOUND (no existence leak), matching the
@@ -83,23 +87,21 @@ export class StorefrontStoreResolver {
       return header.trim().toLowerCase();
     }
 
-    const host = request.headers?.host;
-    if (typeof host === 'string' && host.trim().length > 0) {
-      return this.slugFromHost(host);
-    }
-
-    return undefined;
-  }
-
-  private slugFromHost(host: string): string | undefined {
-    const platformDomain = this.config.get<string>('storefrontDomain') ?? DEFAULT_STOREFRONT_DOMAIN;
-    // Strip the port (e.g. `my-store.platform-domain.com:3000`).
-    const hostname = host.split(':')[0].toLowerCase();
-    const suffix = `.${platformDomain.toLowerCase()}`;
-    if (!hostname.endsWith(suffix)) {
+    // Host-based production resolution is gated by
+    // STOREFRONT_HOST_RESOLUTION_ENABLED (default on in production) so local
+    // development hosts (localhost / 127.0.0.1) are never interpreted as
+    // storefronts unless explicitly configured.
+    const hostResolutionEnabled = this.config.get<boolean>('storefrontHostResolutionEnabled');
+    if (hostResolutionEnabled === false) {
       return undefined;
     }
-    const slug = hostname.slice(0, -suffix.length);
-    return slug.length > 0 && !slug.includes('.') ? slug : undefined;
+
+    const host = request.headers?.host;
+    if (typeof host !== 'string' || host.trim().length === 0) {
+      return undefined;
+    }
+
+    const platformDomain = this.config.get<string>('storefrontDomain') ?? DEFAULT_STOREFRONT_DOMAIN;
+    return storefrontSlugFromHost(host, platformDomain);
   }
 }

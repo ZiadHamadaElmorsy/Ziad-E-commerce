@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import type { Request } from 'express';
 import {
   buildPaginationMeta,
@@ -13,6 +14,9 @@ import {
   toStorefrontProductView,
   toStorefrontStoreView,
 } from '../storefront.types';
+import { isPaymobConfigured } from '../../config/payment-config';
+import { isWhatsAppAvailable } from '../../store-settings/domain/whatsapp-config';
+import { StoreSettingsService } from '../../store-settings/services/store-settings.service';
 import { NotFoundError } from '../../common/errors/domain-exceptions';
 import { ListStorefrontCategoriesQueryDto } from '../dto/list-storefront-categories-query.dto';
 import { ListStorefrontProductsQueryDto } from '../dto/list-storefront-products-query.dto';
@@ -42,12 +46,20 @@ export class StorefrontService {
   constructor(
     private readonly storeResolver: StorefrontStoreResolver,
     private readonly storefrontRepository: StorefrontRepository,
+    private readonly settings: StoreSettingsService,
+    private readonly config: ConfigService,
   ) {}
 
   /** GET /api/v1/storefront — public store configuration required for rendering. */
   async getStore(request: Pick<Request, 'headers'>): Promise<StorefrontStoreView> {
     const store = await this.storeResolver.resolve(request);
-    return toStorefrontStoreView(store);
+    const whatsapp = await this.settings.readWhatsAppSettings(store.id);
+    return toStorefrontStoreView(store, {
+      payOnline: isPaymobConfigured(this.config.get<{ apiKey?: string; integrationId?: string; publicKey?: string }>('paymob')),
+      whatsapp: isWhatsAppAvailable(whatsapp)
+        ? { enabled: true, phoneNumber: whatsapp.phoneNumber, label: whatsapp.label }
+        : null,
+    });
   }
 
   /** GET /api/v1/storefront/products — ACTIVE products with search + pagination. */

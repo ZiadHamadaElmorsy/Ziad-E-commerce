@@ -31,7 +31,7 @@ export interface ApiErrorEnvelope {
 }
 
 interface ApiRequestOptions {
-  method?: 'GET' | 'POST' | 'PATCH' | 'DELETE';
+  method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   body?: unknown;
   headers?: Record<string, string>;
 }
@@ -107,6 +107,7 @@ export const api = {
     apiRequest<T>(path, { method: 'GET', headers }),
   post: <T>(path: string, body?: unknown, headers?: Record<string, string>) =>
     apiRequest<T>(path, { method: 'POST', body, headers }),
+  put: <T>(path: string, body?: unknown) => apiRequest<T>(path, { method: 'PUT', body }),
   patch: <T>(path: string, body?: unknown) => apiRequest<T>(path, { method: 'PATCH', body }),
   delete: <T>(path: string) => apiRequest<T>(path, { method: 'DELETE' }),
 };

@@ -25,10 +25,12 @@ const NAV_ITEMS: NavItem[] = [
 
 export function Sidebar({
   storeName,
+  storeSlug,
   mobileOpen,
   onNavigate,
 }: {
   storeName?: string;
+  storeSlug?: string;
   mobileOpen: boolean;
   onNavigate: () => void;
 }) {
@@ -67,6 +69,11 @@ export function Sidebar({
       </nav>
 
       <div className="sidebar__footer">
+        {storeSlug ? (
+          <Link href={`/store/${storeSlug}`} className="sidebar__view-store" data-testid="sidebar-view-store">
+            {t('nav.viewStore')}
+          </Link>
+        ) : null}
         <p className="sidebar__footer-note">{t('common.appName')}</p>
       </div>
     </aside>

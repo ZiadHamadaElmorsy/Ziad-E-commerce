@@ -112,6 +112,16 @@ enum OrderStatus {
   @@map("order_status")
 }
 
+/// Order acquisition/payment channel (Phase 22 — WhatsApp ordering).
+/// ONLINE_PAYMENT = provider-hosted card checkout (Paymob).
+/// WHATSAPP      = order placed via WhatsApp, paid manually by the merchant.
+enum OrderChannel {
+  ONLINE_PAYMENT
+  WHATSAPP
+
+  @@map("order_channel")
+}
+
 enum PaymentStatus {
   PENDING
   PROCESSING
@@ -557,9 +567,10 @@ model CartItem {
 /// payment status are separate state machines (DATABASE.md section 15.6).
 model Order {
   id                      String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  storeId                 String      @map("store_id") @db.Uuid
-  orderNumber             String      @map("order_number")
-  customerId              String?     @map("customer_id") @db.Uuid
+  storeId                 String       @map("store_id") @db.Uuid
+  orderNumber             String       @map("order_number")
+  channel                 OrderChannel @default(ONLINE_PAYMENT) @map("channel")
+  customerId              String?      @map("customer_id") @db.Uuid
   status                  OrderStatus @default(PENDING)
   currency                String      @db.Char(3)
   subtotal                BigInt      @db.BigInt
@@ -572,6 +583,12 @@ model Order {
   shippingAddressSnapshot Json        @map("shipping_address_snapshot")
   billingAddressSnapshot  Json?       @map("billing_address_snapshot")
   idempotencyKey          String?     @map("idempotency_key")
+  /// Phase 23 — per-order secure lookup token. Generated at checkout (192-bit
+  /// hex). Required to read the customer PII of an order through the PUBLIC
+  /// storefront confirmation endpoint (`GET /storefront/orders/:orderId`);
+  /// without it the endpoint returns a PII-free view (docs/API-SPEC.md §36).
+  /// Legacy rows are backfilled by migration 20260816000000.
+  lookupToken             String?     @unique @map("lookup_token")
   createdAt               DateTime    @default(now()) @map("created_at") @db.Timestamptz
   updatedAt               DateTime    @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
   confirmedAt             DateTime?   @map("confirmed_at") @db.Timestamptz
@@ -861,4 +878,22 @@ model AuditLog {
 
   @@index([storeId, createdAt])
   @@map("audit_logs")
+}
+
+// ---------------------------------------------------------------------------
+// 9. OPERATIONS — DISTRIBUTED JOB LEASES (Phase 23)
+// ---------------------------------------------------------------------------
+
+/// Lease row for a background maintenance job (Phase 23 — multi-instance safe
+/// sweeps). Exactly one API instance may hold the lease for a job at a time;
+/// the lease auto-expires so a crashed instance never blocks the sweep.
+/// Accessed ONLY through the raw SQL in `src/jobs/sweep-lease.service.ts`
+/// (Prisma model kept so `prisma migrate dev` never reports drift).
+model JobLease {
+  jobName        String   @id @map("job_name")
+  leaseOwner     String   @map("lease_owner")
+  acquiredAt     DateTime @default(now()) @map("acquired_at") @db.Timestamptz
+  leaseExpiresAt DateTime @map("lease_expires_at") @db.Timestamptz
+
+  @@map("job_leases")
 }

@@ -40,3 +40,21 @@ export function assertValidStoreSlug(input: string): void {
     );
   }
 }
+
+/**
+ * Derives a Store slug candidate from a store name:
+ * "Ziad Boutique" -> "ziad-boutique".
+ *
+ * The result is a *candidate* only — global uniqueness is enforced by the
+ * database (`stores.slug` UNIQUE) and surfaces as a CONFLICT so the caller can
+ * let the merchant pick a different name/slug.
+ */
+export function generateStoreSlug(name: string): string {
+  return name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, MAX_STORE_SLUG_LENGTH)
+    .replace(/^-+|-+$/g, '');
+}

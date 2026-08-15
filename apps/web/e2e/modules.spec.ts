@@ -49,9 +49,13 @@ test.describe('Store editing', () => {
     const original = await nameInput.inputValue();
     const suffix = uniqueSuffix();
 
+    // The settings page has one form per section (Phase 22 adds the WhatsApp
+    // card), so scope the save action to the store-name form.
+    const storeForm = page.locator('form').filter({ hasText: 'Store name' });
+
     // Rename through PATCH /stores/current.
     await nameInput.fill(`${original} ${suffix}`);
-    await page.getByRole('button', { name: 'Save changes' }).click();
+    await storeForm.getByRole('button', { name: 'Save changes' }).click();
     await expect(page.getByText('Store updated.')).toBeVisible();
 
     // The topbar reflects the new store name immediately.
@@ -59,7 +63,7 @@ test.describe('Store editing', () => {
 
     // Restore the original name.
     await nameInput.fill(original);
-    await page.getByRole('button', { name: 'Save changes' }).click();
+    await storeForm.getByRole('button', { name: 'Save changes' }).click();
     await expect(page.getByText('Store updated.')).toBeVisible();
   });
 });

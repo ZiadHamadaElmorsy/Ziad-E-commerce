@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { Order, OrderStatus, Prisma } from '@prisma/client';
+import { Order, OrderChannel, OrderStatus, Prisma } from '@prisma/client';
 import { requireStoreId } from '../../catalog/domain/catalog-tenant';
 import { buildPaginationMeta } from '../../catalog/catalog.types';
 import { RequestContextService } from '../../common/context/request-context.service';
@@ -145,6 +145,18 @@ export class OrdersService {
           // (guarded ACTIVE -> RELEASED), so a concurrent release race is
           // safe; CONSUMED/RELEASED reservations are skipped.
           await this.reservations.releaseAllForOrderTx(tx, storeId, orderId);
+        }
+
+        // Phase 22 — WhatsApp orders have NO payment webhook to consume their
+        // reservations (the customer pays the merchant manually). The
+        // merchant's manual confirmation (PENDING -> CONFIRMED) is the
+        // commitment point: consume the ACTIVE reservations in the SAME
+        // transaction so a confirmed order never loses its stock to the Phase
+        // 21 expiry sweep. Consumption is idempotent (guarded
+        // ACTIVE -> CONSUMED); ONLINE_PAYMENT orders keep their existing
+        // webhook-driven consumption.
+        if (dto.status === OrderStatus.CONFIRMED && order.channel === OrderChannel.WHATSAPP) {
+          await this.reservations.consumeAllForOrderTx(tx, storeId, orderId);
         }
 
         await this.writeAudit(tx, storeId, order, dto.status, actorAuthUserId);

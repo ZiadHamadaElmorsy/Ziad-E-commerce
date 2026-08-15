@@ -26,5 +26,10 @@ import { SupabaseStorageProvider } from './storage/supabase-storage-provider';
     MediaRepository,
     { provide: StorageProvider, useClass: SupabaseStorageProvider },
   ],
+  // StorageProvider is exported for the public storefront media proxy
+  // (Phase 19): the storefront commerce service resolves the media row
+  // server-side (store-scoped) and then streams the object bytes through the
+  // same storage abstraction — no second storage implementation.
+  exports: [StorageProvider],
 })
 export class MediaModule {}

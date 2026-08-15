@@ -2,13 +2,21 @@ import { Injectable } from '@nestjs/common';
 import { Prisma, User } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 
+/** Minimal write input for creating the application User row (docs/DATABASE.md §7.1). */
+export interface CreateUserInput {
+  authUserId: string;
+  firstName: string;
+  lastName: string;
+  email: string;
+}
+
 /**
  * Persistence access for the platform-level application `users` table.
  *
  * Encapsulates Prisma access only — no business rules. A User row mirrors the
- * Supabase Auth identity (docs/DATABASE.md §7.1) and must already exist when
- * Identity & Tenancy operations run; user *provisioning* is an open
- * dependency (see docs/IMPLEMENTATION-PHASE2-IDENTITY-TENANCY.md).
+ * Supabase Auth identity (docs/DATABASE.md §7.1). Since Phase 17 (merchant
+ * onboarding) the row is provisioned idempotently by the OnboardingService
+ * during merchant registration.
  */
 @Injectable()
 export class UserRepository {
@@ -17,6 +25,18 @@ export class UserRepository {
   /** Finds the application User row mirroring a Supabase Auth subject. */
   async findByAuthUserId(authUserId: string): Promise<User | null> {
     return this.prisma.user.findUnique({ where: { authUserId } });
+  }
+
+  /** Creates the application User row inside the caller's transaction. */
+  async create(tx: Prisma.TransactionClient, data: CreateUserInput): Promise<User> {
+    return tx.user.create({
+      data: {
+        authUserId: data.authUserId,
+        firstName: data.firstName,
+        lastName: data.lastName,
+        email: data.email,
+      },
+    });
   }
 
   /**

@@ -6,6 +6,8 @@ import { PrismaService } from '../../prisma/prisma.service';
 export interface CreateCartInput {
   storeId: string;
   guestToken: string;
+  /** Abandoned-cart expiry (carts.expires_at) — set from CART_TTL_MS at creation. */
+  expiresAt?: Date;
 }
 
 /** A Cart row resolved through its guest identity path (guest_token NOT NULL). */
@@ -53,7 +55,8 @@ export class CartRepository {
   /**
    * Creates a guest cart. `status` is ACTIVE (schema default) and `currency`
    * defaults to the store currency 'EGP' (docs/DATABASE.md §7.14 — the FINAL
-   * documents define no other MVP currency flow).
+   * documents define no other MVP currency flow). `expiresAt` bounds the
+   * abandoned-cart lifetime (Phase 21 — CART_TTL_MS).
    */
   async create(tx: Prisma.TransactionClient, data: CreateCartInput): Promise<Cart> {
     return tx.cart.create({
@@ -61,6 +64,7 @@ export class CartRepository {
         storeId: data.storeId,
         guestToken: data.guestToken,
         status: CartStatus.ACTIVE,
+        ...(data.expiresAt ? { expiresAt: data.expiresAt } : {}),
       },
     });
   }

@@ -103,6 +103,7 @@ describe('Catalog (e2e)', () => {
   const txVariantCreate = jest.fn();
   const txVariantUpdate = jest.fn();
   const txVariantUpdateMany = jest.fn();
+  const txVariantFindFirst = jest.fn().mockResolvedValue(null);
   const txCategoryCreate = jest.fn();
   const txCategoryUpdate = jest.fn();
   const txCategoryUpdateMany = jest.fn();
@@ -121,6 +122,7 @@ describe('Catalog (e2e)', () => {
       create: txVariantCreate,
       update: txVariantUpdate,
       updateMany: txVariantUpdateMany,
+      findFirst: txVariantFindFirst,
     },
     category: {
       create: txCategoryCreate,

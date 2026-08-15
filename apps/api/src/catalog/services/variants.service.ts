@@ -1,7 +1,11 @@
 import { Injectable } from '@nestjs/common';
 import { VariantStatus } from '@prisma/client';
 import { RequestContextService } from '../../common/context/request-context.service';
-import { NotFoundError, StateTransitionError } from '../../common/errors/domain-exceptions';
+import {
+  ConflictError,
+  NotFoundError,
+  StateTransitionError,
+} from '../../common/errors/domain-exceptions';
 import { TransactionService } from '../../infrastructure/database/transaction.service';
 import { toVariantView, VariantView } from '../catalog.types';
 import { mapCatalogWriteError } from '../domain/catalog-error.mapper';
@@ -62,20 +66,51 @@ export class VariantsService {
       throw new NotFoundError('The product was not found.');
     }
 
+    const sku = dto.sku === undefined ? null : normalizeSku(dto.sku);
     try {
-      const variant = await this.transaction.runWithTenant(storeId, (tx) =>
-        this.variants.create(tx, {
+      const variant = await this.transaction.runWithTenant(storeId, (tx) => {
+        // Phase 24 — SKU uniqueness is pre-checked WITHIN the store BEFORE the
+        // insert. Under RLS enforcement PostgreSQL suppresses the DETAIL of a
+        // unique-violation error when the conflicting row is invisible to the
+        // querying role, so Prisma reports meta.target=null and the generic
+        // mapper cannot name the constraint. The tenant-bound pre-check sees
+        // only this store's rows and produces the precise conflict; the
+        // database unique index remains the atomic backstop.
+        if (sku !== null) {
+          return this.variants
+            .findByStoreAndSku(tx, storeId, sku)
+            .then((existing) => {
+              if (existing) {
+                throw new ConflictError('A variant with this SKU already exists in this store.');
+              }
+              return this.variants.create(tx, {
+                storeId,
+                productId,
+                name: dto.name,
+                sku,
+                price: BigInt(dto.price),
+                ...(dto.compareAtPrice !== undefined
+                  ? {
+                      compareAtPrice:
+                        dto.compareAtPrice === null ? null : BigInt(dto.compareAtPrice),
+                    }
+                  : {}),
+                status: VariantStatus.ACTIVE,
+              });
+            });
+        }
+        return this.variants.create(tx, {
           storeId,
           productId,
           name: dto.name,
-          sku: dto.sku === undefined ? null : normalizeSku(dto.sku),
+          sku: null,
           price: BigInt(dto.price),
           ...(dto.compareAtPrice !== undefined
             ? { compareAtPrice: dto.compareAtPrice === null ? null : BigInt(dto.compareAtPrice) }
             : {}),
           status: VariantStatus.ACTIVE,
-        }),
-      );
+        });
+      });
       return toVariantView(variant);
     } catch (error) {
       throw mapCatalogWriteError(error, VARIANT_UNIQUE_MESSAGES);
@@ -86,16 +121,34 @@ export class VariantsService {
     const storeId = requireStoreId(this.requestContext);
 
     try {
-      const updated = await this.transaction.runWithTenant(storeId, (tx) =>
-        this.variants.update(tx, storeId, variantId, {
+      const updated = await this.transaction.runWithTenant(storeId, async (tx) => {
+        // Same RLS-aware SKU-uniqueness pre-check (Phase 24): when the SKU is
+        // being changed, ensure no OTHER variant in this store already holds it.
+        if (dto.sku !== undefined) {
+          const sku = normalizeSku(dto.sku);
+          if (sku !== null) {
+            const existing = await this.variants.findByStoreAndSku(tx, storeId, sku);
+            if (existing && existing.id !== variantId) {
+              throw new ConflictError('A variant with this SKU already exists in this store.');
+            }
+          }
+          return this.variants.update(tx, storeId, variantId, {
+            ...(dto.name !== undefined ? { name: dto.name } : {}),
+            sku,
+            ...(dto.price !== undefined ? { price: BigInt(dto.price) } : {}),
+            ...(dto.compareAtPrice !== undefined
+              ? { compareAtPrice: dto.compareAtPrice === null ? null : BigInt(dto.compareAtPrice) }
+              : {}),
+          });
+        }
+        return this.variants.update(tx, storeId, variantId, {
           ...(dto.name !== undefined ? { name: dto.name } : {}),
-          ...(dto.sku !== undefined ? { sku: normalizeSku(dto.sku) } : {}),
           ...(dto.price !== undefined ? { price: BigInt(dto.price) } : {}),
           ...(dto.compareAtPrice !== undefined
             ? { compareAtPrice: dto.compareAtPrice === null ? null : BigInt(dto.compareAtPrice) }
             : {}),
-        }),
-      );
+        });
+      });
       return toVariantView(updated);
     } catch (error) {
       throw mapCatalogWriteError(error, VARIANT_UNIQUE_MESSAGES);

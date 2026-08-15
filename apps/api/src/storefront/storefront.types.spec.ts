@@ -17,14 +17,23 @@ describe('Storefront types / mappers', () => {
     timezone: 'Africa/Cairo',
   };
 
-  it('toStorefrontStoreView exposes only public store configuration', () => {
-    expect(toStorefrontStoreView(storeRow)).toEqual({
+  it('toStorefrontStoreView exposes only public store configuration + payment methods', () => {
+    expect(
+      toStorefrontStoreView(storeRow, {
+        payOnline: true,
+        whatsapp: { enabled: true, phoneNumber: '201012345678', label: null },
+      }),
+    ).toEqual({
       id: 'store-1',
       name: 'My Store',
       slug: 'my-store',
       description: 'A test store',
       currency: 'EGP',
       timezone: 'Africa/Cairo',
+      payments: {
+        payOnline: true,
+        whatsapp: { enabled: true, phoneNumber: '201012345678', label: null },
+      },
     });
   });
 

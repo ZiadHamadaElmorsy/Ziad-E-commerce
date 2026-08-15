@@ -1,4 +1,4 @@
-import { OrderStatus } from '@prisma/client';
+import { OrderChannel, OrderStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateOrderInput, CreateOrderItemInput, OrderRepository } from './order.repository';
 
@@ -88,6 +88,7 @@ describe('OrderRepository', () => {
     const data: CreateOrderInput = {
       storeId: 'store-1',
       orderNumber: 'ORD-2026-000001',
+      channel: OrderChannel.ONLINE_PAYMENT,
       customerId: 'customer-1',
       status: OrderStatus.PENDING,
       currency: 'EGP',
@@ -101,6 +102,7 @@ describe('OrderRepository', () => {
       shippingAddressSnapshot: { governorate: 'Gharbia' },
       billingAddressSnapshot: null as never,
       idempotencyKey: 'key-1',
+      lookupToken: 'lookup-token-1',
     };
     const items: CreateOrderItemInput[] = [
       {

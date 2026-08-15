@@ -37,5 +37,60 @@ export function validate(config: Record<string, unknown>): Record<string, unknow
     );
   }
 
+  // Phase 21 — fail fast on malformed numeric configuration so a production
+  // deployment never boots with a silently-zero rate-limit / expiry / media
+  // value (which would be interpreted as "no limit").
+  const positiveIntVars = [
+    'RATE_LIMIT_DEFAULT_WINDOW_MS',
+    'RATE_LIMIT_DEFAULT_LIMIT',
+    'RATE_LIMIT_AUTH_LIMIT',
+    'RATE_LIMIT_STOREFRONT_READ_LIMIT',
+    'RATE_LIMIT_CART_LIMIT',
+    'RATE_LIMIT_CHECKOUT_LIMIT',
+    'RATE_LIMIT_PAYMENT_LIMIT',
+    'RATE_LIMIT_ORDER_LOOKUP_LIMIT',
+    'RATE_LIMIT_MEDIA_LIMIT',
+    'RATE_LIMIT_WEBHOOK_LIMIT',
+    'RATE_LIMIT_MERCHANT_API_LIMIT',
+    'CART_TTL_MS',
+    'RESERVATION_TTL_MS',
+    'RESERVATION_EXPIRY_INTERVAL_MS',
+    'RESERVATION_EXPIRY_BATCH_SIZE',
+    'MEDIA_MAX_UPLOAD_BYTES',
+  ] as const;
+
+  for (const name of positiveIntVars) {
+    const raw = config[name];
+    if (raw === undefined || raw === '') {
+      continue;
+    }
+    const parsed = Number(raw);
+    if (!Number.isInteger(parsed) || parsed <= 0) {
+      throw new Error(`${name} must be a positive integer. Received: ${String(raw)}`);
+    }
+  }
+
+  const mediaMime = config.MEDIA_ALLOWED_MIME_TYPES;
+  if (mediaMime !== undefined && String(mediaMime).trim().length === 0) {
+    throw new Error('MEDIA_ALLOWED_MIME_TYPES must contain at least one MIME type.');
+  }
+
+  // Phase 23 — production CORS hardening: a wildcard origin would allow any
+  // website to call the authenticated merchant API with credentials. Fail fast
+  // at boot instead of silently weakening the allowlist.
+  if (nodeEnv === 'production') {
+    const corsRaw = config.CORS_ORIGINS;
+    if (corsRaw === undefined || String(corsRaw).trim().length === 0) {
+      throw new Error('CORS_ORIGINS must be set in production (comma-separated allowlist).');
+    }
+    const origins = String(corsRaw).split(',').map((origin) => origin.trim()).filter(Boolean);
+    if (origins.length === 0) {
+      throw new Error('CORS_ORIGINS must contain at least one origin in production.');
+    }
+    if (origins.some((origin) => origin === '*')) {
+      throw new Error('CORS_ORIGINS must not contain "*" in production (wildcard origins are forbidden).');
+    }
+  }
+
   return config;
 }

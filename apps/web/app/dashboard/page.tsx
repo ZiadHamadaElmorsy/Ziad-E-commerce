@@ -152,6 +152,13 @@ export default function DashboardPage() {
               : t('dashboard.manageStoreSimple')}
           </p>
         </div>
+        {store ? (
+          <div className="page-header__actions">
+            <Link href={`/store/${store.slug}`} className="btn btn--primary btn--sm" data-testid="view-store">
+              {t('dashboard.viewStore')}
+            </Link>
+          </div>
+        ) : null}
       </div>
 
       {error ? (

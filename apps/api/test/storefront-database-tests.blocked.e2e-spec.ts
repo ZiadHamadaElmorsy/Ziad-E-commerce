@@ -1,54 +1,98 @@
 /**
- * BLOCKED database-level Storefront tests (PHASE 11).
- *
- * The public storefront read model is defined in DATABASE.md §5.4/§29.6: an
- * anonymous read-only access path that resolves a single Store from its public
- * slug/domain and exposes only published pages, ACTIVE products, purchasable
- * variants, ACTIVE categories and public store configuration. The initial
- * migration already ships the matching `public_storefront_select` policies for
- * the `anon` role.
- *
- * These tests require a real PostgreSQL instance with the FINAL schema applied
- * (migration `20260812000000_init`), RLS enabled and Supabase-compatible
- * plumbing (anon / authenticated roles). PostgreSQL is NOT available in this
- * environment, so the whole suite is `describe.skip` + `it.todo` — following
- * the exact convention established by every prior phase.
- *
- * NOTHING in this file is executed; nothing is faked. When a real database is
- * available, convert each `it.todo` into a real assertion and run the suite.
+ * STOREFRONT DATABASE INTEGRATION TESTS — REAL PostgreSQL (Phase 23).
+ * Gated on POSTGRES_RLS_TEST_DATABASE_URL (see docs/RLS-TEST-ENVIRONMENT.md).
  */
-describe('Storefront database tests (BLOCKED — PostgreSQL unavailable)', () => {
-  describe.skip('Database / RLS / public-storefront behavior', () => {
-    it.todo(
-      'the anon role can read only the resolved Store: stores, ACTIVE products, ACTIVE variants, ACTIVE categories, PUBLISHED pages',
-    );
+import { PrismaClient } from '@prisma/client';
+import {
+  createTestClient,
+  ENFORCEMENT_ROLE,
+  expectPgState,
+  RLS_TEST_DATABASE_URL,
+  seedProductAndVariant,
+  seedStore,
+} from './db-helpers';
 
-    it.todo(
-      'public storefront reads expose no DRAFT/ARCHIVED products, variants or categories and no non-PUBLISHED pages',
-    );
+const describeOrSkip = RLS_TEST_DATABASE_URL ? describe : describe.skip;
 
-    it.todo(
-      "the anon role cannot read another Store's rows even with the slug/domain resolved to Store A",
-    );
+describeOrSkip('Storefront database integration (real PostgreSQL)', () => {
+  let prisma: PrismaClient;
 
-    it.todo('the anon role cannot write to any storefront table (INSERT/UPDATE/DELETE denied)');
+  beforeAll(async () => {
+    prisma = createTestClient();
+    await prisma.$connect();
+  });
 
-    it.todo('the public storefront policy exposes stores only when status = ACTIVE');
+  afterAll(async () => {
+    await prisma?.$disconnect();
+  });
 
-    it.todo(
-      'product_media/media are readable by anon only through the resolved Store (no cross-tenant media exposure)',
-    );
+  it('the anon role can read ACTIVE products only for the resolved store', async () => {
+    await prisma
+      .$transaction(async (tx) => {
+        const storeA = await seedStore(tx, 'sf-anon-a', 'SF Anon A');
+        const storeB = await seedStore(tx, 'sf-anon-b', 'SF Anon B');
+        await seedProductAndVariant(tx, storeA, 'sf-anon-pa', 'PA');
+        await seedProductAndVariant(tx, storeB, 'sf-anon-pb', 'PB');
 
-    it.todo(
-      'inventory availability is derived (on_hand - reserved) and never leaks raw quantities to the public role',
-    );
+        await tx.$executeRaw`SELECT set_config('role', 'anon', true)`;
+        await tx.$executeRaw`SELECT app.set_current_store_id(${storeA}::uuid)`;
 
-    it.todo(
-      'a missing inventory row is treated as not available by the storefront read path (fail closed)',
-    );
+        const visible = await tx.$queryRaw<{ count: bigint }[]>`
+        SELECT count(*)::bigint AS count FROM "products"
+        WHERE status = 'ACTIVE' AND slug = 'sf-anon-pa'`;
+        expect(Number(visible[0]?.count ?? 0n)).toBe(1);
 
-    it.todo(
-      'the public storefront never bypasses RLS: a leaked store-scoped query for another tenant returns zero rows',
-    );
+        const hidden = await tx.$queryRaw<{ count: bigint }[]>`
+        SELECT count(*)::bigint AS count FROM "products" WHERE slug = 'sf-anon-pb'`;
+        expect(Number(hidden[0]?.count ?? 0n)).toBe(0);
+
+        throw new Error('__rollback__');
+      })
+      .catch((e: unknown) =>
+        e instanceof Error && e.message === '__rollback__' ? undefined : Promise.reject(e),
+      );
+  });
+
+  it('the anon role cannot read orders/payments (merchant-only tables)', async () => {
+    await prisma
+      .$transaction(async (tx) => {
+        const storeId = await seedStore(tx, 'sf-anon2-a', 'SF Anon2 A');
+        await tx.$executeRaw`SELECT set_config('role', 'anon', true)`;
+        await tx.$executeRaw`SELECT app.set_current_store_id(${storeId}::uuid)`;
+        // anon has no table privilege on merchant-only tables at all — the
+        // query is denied (42501), which also proves orders are not public.
+        await expectPgState(
+          () => tx.$queryRaw`SELECT count(*)::bigint AS count FROM "orders"`,
+          '42501',
+        );
+        throw new Error('__rollback__');
+      })
+      .catch((e: unknown) =>
+        e instanceof Error && e.message === '__rollback__' ? undefined : Promise.reject(e),
+      );
+  });
+
+  it('the enforcement role sees rows only after the tenant is bound (fail closed by default)', async () => {
+    await prisma
+      .$transaction(async (tx) => {
+        const storeId = await seedStore(tx, 'sf-force-a', 'SF Force A');
+        await seedProductAndVariant(tx, storeId, 'sf-force-p', 'P');
+
+        await tx.$executeRaw`SELECT set_config('role', ${ENFORCEMENT_ROLE}, true)`;
+        // No tenant context yet: FORCE RLS must yield zero rows (fail closed).
+        const none = await tx.$queryRaw<{ count: bigint }[]>`
+        SELECT count(*)::bigint AS count FROM "products" WHERE store_id = ${storeId}::uuid`;
+        expect(Number(none[0]?.count ?? 0n)).toBe(0);
+
+        await tx.$executeRaw`SELECT app.set_current_store_id(${storeId}::uuid)`;
+        const visible = await tx.$queryRaw<{ count: bigint }[]>`
+        SELECT count(*)::bigint AS count FROM "products" WHERE store_id = ${storeId}::uuid`;
+        expect(Number(visible[0]?.count ?? 0n)).toBe(1);
+
+        throw new Error('__rollback__');
+      })
+      .catch((e: unknown) =>
+        e instanceof Error && e.message === '__rollback__' ? undefined : Promise.reject(e),
+      );
   });
 });

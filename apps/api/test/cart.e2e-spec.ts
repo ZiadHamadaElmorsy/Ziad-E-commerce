@@ -401,6 +401,8 @@ describe('Cart (e2e)', () => {
             // from client input) — assert shape only.
             guestToken: expect.any(String),
             status: CartStatus.ACTIVE,
+            // Phase 21 — new carts carry an abandoned-cart expiry (CART_TTL_MS).
+            expiresAt: expect.any(Date),
           },
         }),
       );

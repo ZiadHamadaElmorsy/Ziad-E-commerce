@@ -9,10 +9,11 @@ import {
   Query,
   Req,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import type { Request } from 'express';
 import { CreateMediaQueryDto } from '../dto/create-media-query.dto';
 import { readRawBody } from '../domain/read-raw-body';
-import { MediaService } from '../services/media.service';
+import { mapUploadTooLargeError, MediaService } from '../services/media.service';
 
 /**
  * Media API (docs/API-SPEC.md §29).
@@ -29,18 +30,33 @@ import { MediaService } from '../services/media.service';
  */
 @Controller('media')
 export class MediaController {
-  constructor(private readonly media: MediaService) {}
+  constructor(
+    private readonly media: MediaService,
+    private readonly config: ConfigService,
+  ) {}
 
   @Post()
   @HttpCode(HttpStatus.CREATED)
   async create(@Req() req: Request, @Query() query: CreateMediaQueryDto) {
-    const data = await readRawBody(req);
-    const media = await this.media.createUpload({
-      data,
-      contentType: req.headers['content-type'],
-      altText: query.altText,
-    });
-    return { data: media };
+    try {
+      const data = await readRawBody(req, this.maxUploadBytes());
+      const media = await this.media.createUpload({
+        data,
+        contentType: req.headers['content-type'],
+        altText: query.altText,
+      });
+      return { data: media };
+    } catch (error) {
+      throw mapUploadTooLargeError(error);
+    }
+  }
+
+  /** Configured maximum upload size (MEDIA_MAX_UPLOAD_BYTES). */
+  private maxUploadBytes(): number {
+    const value = this.config.get<number>('media.maxUploadBytes');
+    return Number.isInteger(value) && (value as number) > 0
+      ? (value as number)
+      : 10 * 1024 * 1024;
   }
 
   @Get(':mediaId')

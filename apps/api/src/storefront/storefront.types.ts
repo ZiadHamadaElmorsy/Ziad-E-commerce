@@ -27,6 +27,20 @@ export interface StorefrontStoreView {
   description: string | null;
   currency: string;
   timezone: string;
+  /**
+   * Public payment availability (Phase 22): which payment methods the customer
+   * can actually use at checkout. `payOnline` reflects the deployment-level
+   * Paymob configuration; `whatsapp` reflects the merchant's store-scoped
+   * WhatsApp settings (null when disabled/invalid).
+   */
+  payments: {
+    payOnline: boolean;
+    whatsapp: {
+      enabled: boolean;
+      phoneNumber: string;
+      label: string | null;
+    } | null;
+  };
 }
 
 /** A public product image reference (media id + alt text; no storage internals). */
@@ -101,14 +115,17 @@ export interface StorefrontProductRow {
   productMedia: Array<{ media: { id: string; altText: string | null } }>;
 }
 
-export function toStorefrontStoreView(store: {
-  id: string;
-  name: string;
-  slug: string;
-  description: string | null;
-  currency: string;
-  timezone: string;
-}): StorefrontStoreView {
+export function toStorefrontStoreView(
+  store: {
+    id: string;
+    name: string;
+    slug: string;
+    description: string | null;
+    currency: string;
+    timezone: string;
+  },
+  payments: StorefrontStoreView['payments'],
+): StorefrontStoreView {
   return {
     id: store.id,
     name: store.name,
@@ -116,6 +133,7 @@ export function toStorefrontStoreView(store: {
     description: store.description,
     currency: store.currency,
     timezone: store.timezone,
+    payments,
   };
 }
 

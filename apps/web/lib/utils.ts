@@ -49,3 +49,28 @@ export function initialsFrom(name: string | undefined | null, email?: string | n
 export function isEmail(value: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
 }
+
+/**
+ * Derives a Store slug candidate from a store name, matching the backend rule
+ * (identity/domain/store-slug.ts): lowercase letters, digits and hyphens,
+ * 1-63 chars, no leading/trailing hyphen.
+ */
+export function slugifyStoreName(name: string): string {
+  return name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 63)
+    .replace(/^-+|-+$/g, '');
+}
+
+/** Converts an EGP pounds input (e.g. "250.50") to integer piastres. */
+export function poundsToPiastres(value: string): number {
+  const normalized = value.trim().replace(/,/g, '');
+  const parsed = Number.parseFloat(normalized);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return NaN;
+  }
+  return Math.round(parsed * 100);
+}

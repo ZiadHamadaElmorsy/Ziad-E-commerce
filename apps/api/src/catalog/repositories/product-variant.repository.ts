@@ -72,6 +72,21 @@ export class ProductVariantRepository {
     });
   }
 
+  /**
+   * Finds a variant by its store-scoped SKU (Phase 24 — RLS-aware uniqueness
+   * pre-check). Runs on the tenant-bound transaction client so RLS scopes it
+   * to the bound store; used before insert/update so the API can return the
+   * precise conflict message even though PostgreSQL suppresses the unique
+   * violation DETAIL for roles subject to RLS.
+   */
+  async findByStoreAndSku(
+    tx: Prisma.TransactionClient,
+    storeId: string,
+    sku: string,
+  ): Promise<ProductVariant | null> {
+    return tx.productVariant.findFirst({ where: { storeId, sku } });
+  }
+
   async findByProductId(storeId: string, productId: string): Promise<ProductVariant[]> {
     return this.prisma.productVariant.findMany({
       where: { storeId, productId },

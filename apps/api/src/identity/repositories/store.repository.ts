@@ -43,6 +43,11 @@ export class StoreRepository {
     return this.prisma.store.findUnique({ where: { id } });
   }
 
+  /** Finds a Store inside the caller's transaction (onboarding idempotency). */
+  async findByIdTx(tx: Prisma.TransactionClient, id: string): Promise<Store | null> {
+    return tx.store.findUnique({ where: { id } });
+  }
+
   async findBySlug(slug: string): Promise<Store | null> {
     return this.prisma.store.findUnique({ where: { slug } });
   }

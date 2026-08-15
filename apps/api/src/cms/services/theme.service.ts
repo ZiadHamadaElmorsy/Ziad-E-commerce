@@ -41,18 +41,24 @@ export class ThemeService {
     private readonly audit: CmsAuditService,
   ) {}
 
-  /** GET /api/v1/theme — the store's theme configuration (default when absent). */
-  async getTheme(): Promise<ThemeView> {
-    const storeId = requireStoreId(this.requestContext);
+  /**
+   * GET /api/v1/theme — the store's theme configuration (default when absent).
+   *
+   * `storeId` is optional: the merchant path resolves it from the trusted
+   * tenant context; the public storefront path passes the store resolved
+   * SERVER-SIDE by the StorefrontStoreResolver (never client input).
+   */
+  async getTheme(storeId?: string): Promise<ThemeView> {
+    const resolvedStoreId = storeId ?? requireStoreId(this.requestContext);
 
-    const existing = await this.themes.findByStoreId(storeId);
+    const existing = await this.themes.findByStoreId(resolvedStoreId);
     if (existing) {
       return toThemeView(existing);
     }
 
-    const created = await this.transaction.runWithTenant(storeId, (tx) =>
+    const created = await this.transaction.runWithTenant(resolvedStoreId, (tx) =>
       this.themes.create(tx, {
-        storeId,
+        storeId: resolvedStoreId,
         config: DEFAULT_THEME_CONFIG,
       }),
     );

@@ -101,6 +101,47 @@ describe('StorefrontStoreResolver', () => {
     await expect(resolver.resolve(requestWith({}))).rejects.toThrow(NotFoundError);
   });
 
+  it('handles the root storefront domain separately (not a storefront)', async () => {
+    storefrontRepository.findStoreBySlug.mockResolvedValue(storeRow);
+
+    await expect(resolver.resolve(requestWith({ host: 'platform-domain.com' }))).rejects.toThrow(
+      NotFoundError,
+    );
+    await expect(resolver.resolve(requestWith({ host: 'www.platform-domain.com' }))).rejects.toThrow(
+      NotFoundError,
+    );
+    expect(storefrontRepository.findStoreBySlug).not.toHaveBeenCalled();
+  });
+
+  it('ignores Host resolution when STOREFRONT_HOST_RESOLUTION_ENABLED is false', async () => {
+    configService.get.mockImplementation((key: string) => {
+      if (key === 'storefrontHostResolutionEnabled') {
+        return false;
+      }
+      return 'platform-domain.com';
+    });
+    storefrontRepository.findStoreBySlug.mockResolvedValue(storeRow);
+
+    await expect(
+      resolver.resolve(requestWith({ host: 'my-store.platform-domain.com' })),
+    ).rejects.toThrow(NotFoundError);
+    expect(storefrontRepository.findStoreBySlug).not.toHaveBeenCalled();
+  });
+
+  it('still resolves via the X-Storefront-Slug header when host resolution is disabled', async () => {
+    configService.get.mockImplementation((key: string) => {
+      if (key === 'storefrontHostResolutionEnabled') {
+        return false;
+      }
+      return 'platform-domain.com';
+    });
+    storefrontRepository.findStoreBySlug.mockResolvedValue(storeRow);
+
+    await expect(
+      resolver.resolve(requestWith({ 'x-storefront-slug': 'my-store' })),
+    ).resolves.toMatchObject({ id: 'store-1' });
+  });
+
   it('fails closed with NOT_FOUND for an unknown slug (no existence leak)', async () => {
     storefrontRepository.findStoreBySlug.mockResolvedValue(null);
 

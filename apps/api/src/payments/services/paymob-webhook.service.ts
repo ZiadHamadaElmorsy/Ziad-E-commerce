@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import {
   EventProcessingStatus,
   OrderStatus,
@@ -58,6 +58,8 @@ export interface WebhookProcessingResult {
  */
 @Injectable()
 export class PaymobWebhookService {
+  private readonly logger = new Logger(PaymobWebhookService.name);
+
   constructor(
     private readonly provider: PaymentProvider,
     private readonly events: PaymentEventRepository,
@@ -85,6 +87,10 @@ export class PaymobWebhookService {
     // 3. Claim/dedupe the event row (UNIQUE provider + provider_event_id).
     const claimed = await this.claimEvent(event, body);
     if (claimed.alreadyProcessed) {
+      // Phase 23 — safe structured log for duplicate deliveries (ids only).
+      this.logger.log(
+        `paymob webhook duplicate: eventId=${claimed.event.id} providerEventId=${event.providerEventId} status=already_processed`,
+      );
       return { status: 'already_processed' };
     }
 
@@ -96,6 +102,9 @@ export class PaymobWebhookService {
       // Keep the event in the retry scan (RECEIVED/ERROR partial index) and
       // return a safe response — the provider must not receive secrets.
       await this.events.markError(claimed.event.id, 'Payment could not be resolved.');
+      this.logger.warn(
+        `paymob webhook unresolved: eventId=${claimed.event.id} providerEventId=${event.providerEventId} status=payment_unresolved`,
+      );
       return { status: 'payment_unresolved' };
     }
 
@@ -129,6 +138,11 @@ export class PaymobWebhookService {
       // retry/reprocessing scan can safely retry (guarded transitions).
       throw error;
     }
+    // Phase 23 — safe structured log (ids only, never provider payload/secrets).
+    this.logger.log(
+      `paymob webhook processed: eventId=${claimed.event.id} providerEventId=${event.providerEventId} ` +
+        `paymentId=${payment.id} storeId=${payment.storeId} status=processed`,
+    );
     return { status: 'processed' };
   }
 

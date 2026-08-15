@@ -177,6 +177,14 @@ describe('Foundation (e2e)', () => {
       await request(app.getHttpServer()).get('/api/v1/health').expect(200);
     });
 
+    it('applies Phase 21 security headers on every response', async () => {
+      const res = await request(app.getHttpServer()).get('/api/v1/health').expect(200);
+
+      expect(res.headers['x-content-type-options']).toBe('nosniff');
+      expect(res.headers['x-frame-options']).toBe('DENY');
+      expect(res.headers['referrer-policy']).toBe('strict-origin-when-cross-origin');
+    });
+
     it('renders unknown routes with the envelope without leaking internals', async () => {
       const res = await request(app.getHttpServer()).get('/api/v1/does-not-exist').expect(404);
 

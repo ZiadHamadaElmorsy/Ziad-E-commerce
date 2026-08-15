@@ -155,6 +155,7 @@ describe('Storefront (e2e)', () => {
     $queryRaw: jest.fn().mockResolvedValue([{ '?column?': 1 }]),
     store: { findUnique: jest.fn() },
     subscription: { findUnique: jest.fn() },
+    storeSettings: { findUnique: jest.fn() },
     product: {
       findMany: jest.fn(),
       count: jest.fn(),
@@ -186,6 +187,21 @@ describe('Storefront (e2e)', () => {
         }
         return null;
       },
+    );
+
+    // Phase 22 — store-scoped WhatsApp settings (enabled for store-1, disabled
+    // for every other store).
+    prismaServiceStub.storeSettings.findUnique.mockImplementation(
+      async ({ where }: { where: { storeId: string } }) =>
+        where.storeId === 'store-1'
+          ? {
+              id: 'settings-1',
+              storeId: 'store-1',
+              settings: { whatsapp: { enabled: true, phoneNumber: '201012345678', label: null } },
+              createdAt: new Date('2026-08-15T00:00:00Z'),
+              updatedAt: new Date('2026-08-15T00:00:00Z'),
+            }
+          : null,
     );
 
     // Phase 14 — subscription access overlay: store-1 is on an ACTIVE TRIAL,
@@ -328,6 +344,10 @@ describe('Storefront (e2e)', () => {
         description: 'A test store',
         currency: 'EGP',
         timezone: 'Africa/Cairo',
+        payments: {
+          payOnline: false,
+          whatsapp: { enabled: true, phoneNumber: '201012345678', label: null },
+        },
       });
     });
 

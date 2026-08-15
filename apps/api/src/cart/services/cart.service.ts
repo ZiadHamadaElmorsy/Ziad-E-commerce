@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import {
   Cart,
   CartStatus,
@@ -71,30 +72,46 @@ export class CartService {
     private readonly products: ProductRepository,
     private readonly inventoryService: InventoryService,
     private readonly transaction: TransactionService,
+    private readonly config: ConfigService,
   ) {}
 
-  /** GET /api/v1/cart — resolved from the guest/session context. */
-  async getCart(guestToken?: string): Promise<CartView> {
-    const storeId = requireStoreId(this.requestContext);
-    const cart = await this.resolveGuestCart(storeId, guestToken);
+  /**
+   * GET /api/v1/cart — resolved from the guest/session context.
+   *
+   * `storeId` is optional: the merchant path resolves it from the trusted
+   * tenant context; the public storefront path passes the store resolved
+   * server-side by the StorefrontStoreResolver (never client input).
+   */
+  async getCart(guestToken?: string, storeId?: string): Promise<CartView> {
+    const resolvedStoreId = this.resolveStoreId(storeId);
+    const cart = await this.resolveGuestCart(resolvedStoreId, guestToken);
     const current = await this.lazyExpire(cart);
-    return this.buildCartView(storeId, current.id);
+    return this.buildCartView(resolvedStoreId, current.id);
   }
 
-  /** POST /api/v1/cart/items — create the cart on first use, merge on duplicate variant. */
-  async addItem(guestToken: string | undefined, dto: AddCartItemDto): Promise<CartView> {
-    const storeId = requireStoreId(this.requestContext);
+  /**
+   * POST /api/v1/cart/items — create the cart on first use, merge on
+   * duplicate variant. `storeId` is optional (trusted storefront path).
+   */
+  async addItem(guestToken: string | undefined, dto: AddCartItemDto, storeId?: string): Promise<CartView> {
+    const resolvedStoreId = this.resolveStoreId(storeId);
 
     // Resolve the authoritative variant + product ownership/status FIRST (never
     // from the client). The variant must be purchasable (variant + product ACTIVE).
-    const variant = await this.requirePurchasableVariant(storeId, dto.variantId);
+    const variant = await this.requirePurchasableVariant(resolvedStoreId, dto.variantId);
 
     try {
-      const cart = await this.transaction.runWithTenant(storeId, async (tx) => {
+      const cart = await this.transaction.runWithTenant(resolvedStoreId, async (tx) => {
         // Resolve the session cart, or create a new guest cart on first use.
+        // New carts carry an abandoned-cart expiry (CART_TTL_MS) so the
+        // periodic sweep can transition untouched carts ACTIVE -> EXPIRED.
         const cart = guestToken
-          ? await this.resolveGuestCartTx(tx, storeId, guestToken)
-          : await this.carts.create(tx, { storeId, guestToken: generateGuestToken() });
+          ? await this.resolveGuestCartTx(tx, resolvedStoreId, guestToken)
+          : await this.carts.create(tx, {
+              storeId: resolvedStoreId,
+              guestToken: generateGuestToken(),
+              expiresAt: new Date(Date.now() + this.cartTtlMs()),
+            });
 
         await this.assertCartUsableAfterExpiry(tx, cart);
 
@@ -103,7 +120,7 @@ export class CartService {
         const targetQuantity = existing ? existing.quantity + dto.quantity : dto.quantity;
 
         // Advisory availability check — Cart validates but does NOT reserve.
-        await this.assertInventoryAvailable(variant.id, targetQuantity);
+        await this.assertInventoryAvailable(resolvedStoreId, variant.id, targetQuantity);
 
         if (existing) {
           await this.items.updateQuantity(tx, cart.id, existing.id, targetQuantity);
@@ -118,20 +135,24 @@ export class CartService {
         return cart;
       });
 
-      return this.buildCartView(storeId, cart.id);
+      return this.buildCartView(resolvedStoreId, cart.id);
     } catch (error) {
       throw mapCartWriteError(error);
     }
   }
 
-  /** PATCH /api/v1/cart/items/:itemId — replace the line quantity. */
+  /**
+   * PATCH /api/v1/cart/items/:itemId — replace the line quantity.
+   * `storeId` is optional (trusted storefront path).
+   */
   async updateItem(
     guestToken: string | undefined,
     itemId: string,
     dto: UpdateCartItemDto,
+    storeId?: string,
   ): Promise<CartView> {
-    const storeId = requireStoreId(this.requestContext);
-    const cart = await this.resolveGuestCart(storeId, guestToken);
+    const resolvedStoreId = this.resolveStoreId(storeId);
+    const cart = await this.resolveGuestCart(resolvedStoreId, guestToken);
     const current = await this.lazyExpire(cart);
     assertCartUsable(current);
 
@@ -143,12 +164,12 @@ export class CartService {
     // Revalidate the variant it references (item -> variant FK is RESTRICT, but
     // ownership/status must be checked in the trusted store; an item of another
     // store's cart can never match because the cart itself is store-scoped).
-    const variant = await this.requirePurchasableVariant(storeId, item.variantId);
+    const variant = await this.requirePurchasableVariant(resolvedStoreId, item.variantId);
 
-    await this.assertInventoryAvailable(variant.id, dto.quantity);
+    await this.assertInventoryAvailable(resolvedStoreId, variant.id, dto.quantity);
 
     try {
-      const { count } = await this.transaction.runWithTenant(storeId, (tx) =>
+      const { count } = await this.transaction.runWithTenant(resolvedStoreId, (tx) =>
         this.items.updateQuantity(tx, current.id, itemId, dto.quantity),
       );
       if (count === 0) {
@@ -159,18 +180,21 @@ export class CartService {
       throw mapCartWriteError(error);
     }
 
-    return this.buildCartView(storeId, current.id);
+    return this.buildCartView(resolvedStoreId, current.id);
   }
 
-  /** DELETE /api/v1/cart/items/:itemId. */
-  async removeItem(guestToken: string | undefined, itemId: string): Promise<void> {
-    const storeId = requireStoreId(this.requestContext);
-    const cart = await this.resolveGuestCart(storeId, guestToken);
+  /**
+   * DELETE /api/v1/cart/items/:itemId.
+   * `storeId` is optional (trusted storefront path).
+   */
+  async removeItem(guestToken: string | undefined, itemId: string, storeId?: string): Promise<void> {
+    const resolvedStoreId = this.resolveStoreId(storeId);
+    const cart = await this.resolveGuestCart(resolvedStoreId, guestToken);
     const current = await this.lazyExpire(cart);
     assertCartUsable(current);
 
     try {
-      const { count } = await this.transaction.runWithTenant(storeId, (tx) =>
+      const { count } = await this.transaction.runWithTenant(resolvedStoreId, (tx) =>
         this.items.delete(tx, current.id, itemId),
       );
       if (count === 0) {
@@ -181,14 +205,17 @@ export class CartService {
     }
   }
 
-  /** DELETE /api/v1/cart/items — clear the cart (idempotent on an empty cart). */
-  async clearCart(guestToken: string | undefined): Promise<void> {
-    const storeId = requireStoreId(this.requestContext);
-    const cart = await this.resolveGuestCart(storeId, guestToken);
+  /**
+   * DELETE /api/v1/cart/items — clear the cart (idempotent on an empty cart).
+   * `storeId` is optional (trusted storefront path).
+   */
+  async clearCart(guestToken: string | undefined, storeId?: string): Promise<void> {
+    const resolvedStoreId = this.resolveStoreId(storeId);
+    const cart = await this.resolveGuestCart(resolvedStoreId, guestToken);
     const current = await this.lazyExpire(cart);
     assertCartUsable(current);
 
-    await this.transaction.runWithTenant(storeId, (tx) =>
+    await this.transaction.runWithTenant(resolvedStoreId, (tx) =>
       this.items.deleteManyByCart(tx, current.id),
     );
   }
@@ -196,13 +223,23 @@ export class CartService {
   /**
    * Cart expiration sweep (docs/DATABASE.md §11/§17.4). Lazy evaluation already
    * expires a cart when it is accessed; this callable unit (per Store, bounded
-   * batch) handles carts nobody touches. Scheduling is deliberately left to a
-   * future infrastructure decision (no new dependency), mirroring the inventory
-   * reservation sweep precedent. No HTTP endpoint — API-SPEC defines none.
+   * batch) handles carts nobody touches. No HTTP endpoint — API-SPEC defines
+   * none. `storeId` comes from the trusted tenant context.
    */
   async expireDueCarts(batchSize = 100): Promise<{ scanned: number; expired: number }> {
-    const storeId = requireStoreId(this.requestContext);
+    return this.expireDueCartsForStore(requireStoreId(this.requestContext), batchSize);
+  }
 
+  /**
+   * Store-driven cart expiration sweep — the callable unit used by the Phase 21
+   * periodic maintenance job (no request context required). Idempotent: the
+   * guarded ACTIVE -> EXPIRED transition affects zero rows for carts a
+   * concurrent operation already transitioned.
+   */
+  async expireDueCartsForStore(
+    storeId: string,
+    batchSize = 100,
+  ): Promise<{ scanned: number; expired: number }> {
     if (!Number.isInteger(batchSize) || batchSize <= 0) {
       throw new ValidationError('Batch size must be a positive integer.');
     }
@@ -290,6 +327,18 @@ export class CartService {
   }
 
   /**
+   * Resolves the trusted tenant store id for a cart operation.
+   *
+   * The merchant path derives it from the tenant context (Authenticated User
+   * -> ACTIVE StoreMembership -> Store). The public storefront path passes
+   * the store resolved SERVER-SIDE by the StorefrontStoreResolver — never
+   * from client input (API-SPEC §33/§34).
+   */
+  private resolveStoreId(storeId?: string): string {
+    return storeId ?? requireStoreId(this.requestContext);
+  }
+
+  /**
    * Resolves the variant + its product in the trusted tenant and enforces the
    * purchasability rule (docs/DOMAIN-MODEL.md §7.1/§7.2, US-CART-001): the
    * variant must exist in the current store, be ACTIVE, and its product must be
@@ -325,10 +374,14 @@ export class CartService {
    * INSUFFICIENT_INVENTORY, mirroring the Inventory phase rule that a missing
    * row is never rendered as zero.
    */
-  private async assertInventoryAvailable(variantId: string, quantity: number): Promise<void> {
+  private async assertInventoryAvailable(
+    storeId: string,
+    variantId: string,
+    quantity: number,
+  ): Promise<void> {
     let available: number;
     try {
-      const inventory = await this.inventoryService.getInventory(variantId);
+      const inventory = await this.inventoryService.getInventory(variantId, storeId);
       available = inventory.available;
     } catch (error) {
       if (error instanceof NotFoundError) {
@@ -352,5 +405,11 @@ export class CartService {
     }
     const items = await this.items.findManyByCart(cartId);
     return toCartView(cart, items);
+  }
+
+  /** Abandoned-cart TTL (ms) from the environment (CART_TTL_MS, default 7 days). */
+  private cartTtlMs(): number {
+    const ttl = this.config.get<number>('expiry.cartTtlMs');
+    return Number.isInteger(ttl) && (ttl as number) > 0 ? (ttl as number) : 7 * 24 * 60 * 60 * 1000;
   }
 }

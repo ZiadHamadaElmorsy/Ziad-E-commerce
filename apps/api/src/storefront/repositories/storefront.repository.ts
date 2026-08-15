@@ -141,6 +141,15 @@ export class StorefrontRepository {
     });
   }
 
+  /**
+   * Resolves a Media row scoped to the resolved store. Used by the public
+   * storefront media proxy (Phase 19): only media belonging to the resolved
+   * Store can ever be streamed — a cross-tenant media id fails closed.
+   */
+  async findMediaInStore(storeId: string, mediaId: string) {
+    return this.prisma.media.findFirst({ where: { id: mediaId, storeId } });
+  }
+
   async findPublishedPageBySlug(
     storeId: string,
     slug: string,

@@ -26,7 +26,27 @@ import { randomUUID } from 'node:crypto';
  * defined by the API-SPEC (see the phase report).
  */
 export function buildStorageKey(storeId: string, mediaId: string): string {
-  return `${storeId}/${mediaId}`;
+  const key = `${storeId}/${mediaId}`;
+  assertSafeStorageKey(key);
+  return key;
+}
+
+/**
+ * Guards a storage key against path traversal (Phase 21 — media upload
+ * security). Storage keys are server-generated (`{store_id}/{media_id}`), but
+ * this defensive check ensures a malformed input can never escape the store's
+ * prefix or reference parent paths. Fails closed on any suspicious key.
+ */
+export function assertSafeStorageKey(key: string): void {
+  if (!key || key.length === 0) {
+    throw new Error('Media storage key cannot be empty.');
+  }
+  if (key.includes('..') || key.startsWith('/') || key.includes('\\')) {
+    throw new Error('Media storage key contains unsafe path segments.');
+  }
+  if (key.split('/').some((segment) => segment.length === 0)) {
+    throw new Error('Media storage key contains empty path segments.');
+  }
 }
 
 /**

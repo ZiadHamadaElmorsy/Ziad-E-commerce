@@ -1,68 +1,151 @@
 /**
- * BLOCKED database-level Media tests (PHASE 13).
- *
- * The Media persistence contract is defined in DATABASE.md §7.25/§7.26/§9/§12/
- * §22/§25/§29 and shipped by the initial migration:
- *   - media (storage_path; media_type IMAGE/VIDEO/FILE; mime_type; size_bytes
- *     with CHECK >= 0; alt_text; UNIQUE (store_id, id) composite-FK target)
- *   - product_media (composite store-scoped FK to media; media_id FK
- *     ON DELETE RESTRICT; UNIQUE (product_id, media_id))
- *   - theme_configurations.logo_media_id FK media ON DELETE SET NULL
- *   - media.store_id FK stores ON DELETE RESTRICT
- *   - `tenant_isolation_*` (authenticated) and `public_storefront_select`
- *     (anon) RLS policy sets on media + product_media
- *
- * These tests require a real PostgreSQL instance with the FINAL schema applied
- * (migration `20260812000000_init`), RLS enabled and Supabase-compatible
- * plumbing (anon / authenticated roles). PostgreSQL is NOT available in this
- * environment, so the whole suite is `describe.skip` + `it.todo` — following
- * the exact convention established by every prior phase.
- *
- * NOTHING in this file is executed; nothing is faked. When a real database is
- * available, convert each `it.todo` into a real assertion and run the suite.
+ * MEDIA DATABASE INTEGRATION TESTS — REAL PostgreSQL (Phase 23).
+ * Gated on POSTGRES_RLS_TEST_DATABASE_URL (see docs/RLS-TEST-ENVIRONMENT.md).
  */
-describe('Media database tests (BLOCKED — PostgreSQL unavailable)', () => {
-  describe.skip('Database / RLS / Media behavior', () => {
-    it.todo(
-      'the authenticated role is isolated by RLS: a merchant sees only their store media rows',
-    );
+import { Prisma, PrismaClient } from '@prisma/client';
+import {
+  bindTenant,
+  clearTenant,
+  createTestClient,
+  expectPgState,
+  RLS_TEST_DATABASE_URL,
+  seedProductAndVariant,
+  seedStore,
+} from './db-helpers';
 
-    it.todo('a merchant cannot read/update/delete another store media or product_media rows (RLS)');
+const describeOrSkip = RLS_TEST_DATABASE_URL ? describe : describe.skip;
 
-    it.todo(
-      'the authenticated role cannot insert a media row with a forged store_id (RLS WITH CHECK)',
-    );
+async function seedMedia(
+  tx: Prisma.TransactionClient,
+  storeId: string,
+  path: string,
+): Promise<string> {
+  const rows = await tx.$queryRaw<{ id: string }[]>`
+    INSERT INTO "media" (store_id, storage_path, media_type, mime_type, size_bytes)
+    VALUES (${storeId}::uuid, ${path}, 'IMAGE', 'image/png', 5)
+    RETURNING id`;
+  return rows[0].id;
+}
 
-    it.todo('media UNIQUE (store_id, id) backs the composite store-scoped FK target');
+describeOrSkip('Media database integration (real PostgreSQL)', () => {
+  let prisma: PrismaClient;
 
-    it.todo(
-      'product_media composite FK (store_id, media_id) rejects a link to another store media',
-    );
+  beforeAll(async () => {
+    prisma = createTestClient();
+    await prisma.$connect();
+  });
 
-    it.todo('product_media media_id FK RESTRICT blocks deleting a referenced media row');
+  afterAll(async () => {
+    await prisma?.$disconnect();
+  });
 
-    it.todo(
-      'theme_configurations.logo_media_id FK SET NULLs the logo when the media row is deleted',
-    );
+  it('media CHECK (size_bytes >= 0) rejects a negative size_bytes', async () => {
+    await prisma
+      .$transaction(async (tx) => {
+        const storeId = await seedStore(tx, 'media-neg-a', 'Media Neg A');
+        await expectPgState(
+          () =>
+            tx.$queryRaw`INSERT INTO "media" (store_id, storage_path, media_type, size_bytes)
+            VALUES (${storeId}::uuid, 'store-a/neg.png', 'IMAGE', -1)`,
+          '23514',
+        );
+        throw new Error('__rollback__');
+      })
+      .catch((e: unknown) =>
+        e instanceof Error && e.message === '__rollback__' ? undefined : Promise.reject(e),
+      );
+  });
 
-    it.todo('media.store_id FK RESTRICT blocks deleting a Store that still owns media');
+  it('media_type enum rejects an unknown media type', async () => {
+    await prisma
+      .$transaction(async (tx) => {
+        const storeId = await seedStore(tx, 'media-enum-a', 'Media Enum A');
+        await expectPgState(
+          () =>
+            tx.$queryRaw`INSERT INTO "media" (store_id, storage_path, media_type)
+            VALUES (${storeId}::uuid, 'store-a/x.png', 'GIF')`,
+          '22P02',
+        );
+        throw new Error('__rollback__');
+      })
+      .catch((e: unknown) =>
+        e instanceof Error && e.message === '__rollback__' ? undefined : Promise.reject(e),
+      );
+  });
 
-    it.todo('CHECK (size_bytes >= 0) rejects a negative size_bytes value');
+  it('product_media composite FK rejects a link to another store media', async () => {
+    await prisma
+      .$transaction(async (tx) => {
+        const storeA = await seedStore(tx, 'media-fk-a', 'Media FK A');
+        const storeB = await seedStore(tx, 'media-fk-b', 'Media FK B');
+        const mediaB = await seedMedia(tx, storeB, 'store-b/p.png');
+        const { productId } = await seedProductAndVariant(tx, storeA, 'media-fk-pa', 'PA');
+        await expectPgState(
+          () =>
+            tx.$queryRaw`INSERT INTO "product_media" (store_id, product_id, media_id)
+            VALUES (${storeA}::uuid, ${productId}::uuid, ${mediaB}::uuid)`,
+          '23503',
+        );
+        throw new Error('__rollback__');
+      })
+      .catch((e: unknown) =>
+        e instanceof Error && e.message === '__rollback__' ? undefined : Promise.reject(e),
+      );
+  });
 
-    it.todo('media_type enum rejects an unknown media_type value');
+  it('media store_id FK RESTRICT blocks deleting a Store that owns media', async () => {
+    await prisma
+      .$transaction(async (tx) => {
+        const storeId = await seedStore(tx, 'media-del-a', 'Media Del A');
+        await seedMedia(tx, storeId, 'store-a/p.png');
+        await expectPgState(
+          () => tx.$queryRaw`DELETE FROM "stores" WHERE id = ${storeId}::uuid`,
+          '23001',
+        );
+        throw new Error('__rollback__');
+      })
+      .catch((e: unknown) =>
+        e instanceof Error && e.message === '__rollback__' ? undefined : Promise.reject(e),
+      );
+  });
 
-    it.todo('product_media UNIQUE (product_id, media_id) rejects duplicate image links');
+  it('product_media UNIQUE (product_id, media_id) rejects a duplicate image link', async () => {
+    await prisma
+      .$transaction(async (tx) => {
+        const storeId = await seedStore(tx, 'media-dup-a', 'Media Dup A');
+        const mediaId = await seedMedia(tx, storeId, 'store-a/p.png');
+        const { productId } = await seedProductAndVariant(tx, storeId, 'media-dup-p', 'P');
+        await tx.$queryRaw`INSERT INTO "product_media" (store_id, product_id, media_id)
+        VALUES (${storeId}::uuid, ${productId}::uuid, ${mediaId}::uuid)`;
+        await expectPgState(
+          () =>
+            tx.$queryRaw`INSERT INTO "product_media" (store_id, product_id, media_id)
+            VALUES (${storeId}::uuid, ${productId}::uuid, ${mediaId}::uuid)`,
+          '23505',
+        );
+        throw new Error('__rollback__');
+      })
+      .catch((e: unknown) =>
+        e instanceof Error && e.message === '__rollback__' ? undefined : Promise.reject(e),
+      );
+  });
 
-    it.todo(
-      'the anon role can read media and product_media only for the resolved store (public storefront policy)',
-    );
+  it('RLS: a merchant sees only their store media rows', async () => {
+    await prisma
+      .$transaction(async (tx) => {
+        const storeA = await seedStore(tx, 'media-rls-a', 'Media RLS A');
+        const storeB = await seedStore(tx, 'media-rls-b', 'Media RLS B');
+        await seedMedia(tx, storeB, 'store-b/p.png');
 
-    it.todo(
-      'media deletion is safe under concurrency: a product_media insert racing a media delete is rejected by RESTRICT',
-    );
-
-    it.todo(
-      'media deletion is idempotent-safe: deleting an already-deleted media id affects zero rows',
-    );
+        await bindTenant(tx, storeA);
+        const foreign = await tx.$queryRaw<{ count: bigint }[]>`
+        SELECT count(*)::bigint AS count FROM "media" WHERE store_id = ${storeB}::uuid`;
+        expect(Number(foreign[0]?.count ?? 0n)).toBe(0);
+        await clearTenant(tx);
+        throw new Error('__rollback__');
+      })
+      .catch((e: unknown) =>
+        e instanceof Error && e.message === '__rollback__' ? undefined : Promise.reject(e),
+      );
   });
 });
