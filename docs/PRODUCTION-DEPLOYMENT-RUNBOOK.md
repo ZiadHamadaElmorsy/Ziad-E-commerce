@@ -40,6 +40,8 @@ Copy `apps/api/.env.example` / `apps/web/.env.example` / root `.env.example` to
 | `NEXT_PUBLIC_API_URL` | API base incl. `/api/v1` (prod: `https://api.yourdomain.com/api/v1`) |
 | `NEXT_PUBLIC_SUPABASE_URL` | Supabase project URL (public) |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase anon key (public by design) |
+| `NEXT_PUBLIC_APP_URL` | Canonical web origin used for auth redirects. Local: `http://localhost:3000`. Production: `https://ziad-e-commerce-web-sigma.vercel.app` (must be https). If unset, `apps/web/lib/config.ts` falls back to the centralized production origin — the production confirmation email must never redirect to localhost. |
+| `NEXT_PUBLIC_SUPPORT_PHONE` | Public support phone shown on the auth screens (`tel:` link). Placeholder until the merchant supplies the real number. |
 
 ### Server-only secrets (never in browser, never in Git)
 | Variable | Purpose |
@@ -114,6 +116,16 @@ read return zero rows.
 - **Auth:** enable email/password; for the pilot use pre-provisioned, confirmed
   merchants (the onboarding E2E is blocked when the Auth provider rejects the
   test TLD — a real, confirmed email is required for pilot merchants).
+- **Auth → URL Configuration (required for email confirmation to reach the
+  production app):**
+  - **Site URL:** `https://ziad-e-commerce-web-sigma.vercel.app`
+    (NOT `http://localhost:3000` — the current value redirects production
+    confirmation emails to localhost).
+  - **Redirect URLs:** keep `http://localhost:3000/**` (local development) and
+    add `https://ziad-e-commerce-web-sigma.vercel.app/**` (or the exact path
+    `https://ziad-e-commerce-web-sigma.vercel.app/login`, which is the
+    callback path the app passes as `options.emailRedirectTo`). Supabase
+    requires the `redirectTo` URL to match the allowlist.
 - **RLS policies** come from the migrations (do not recreate manually).
 
 ## 6. Storage setup
