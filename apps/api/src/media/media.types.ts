@@ -21,6 +21,7 @@ export interface MediaView {
   sizeBytes: number | null;
   altText: string | null;
   storagePath: string;
+  createdAt: string;
 }
 
 export function toMediaView(media: {
@@ -30,6 +31,7 @@ export function toMediaView(media: {
   sizeBytes: bigint | null;
   altText: string | null;
   storagePath: string;
+  createdAt: Date;
 }): MediaView {
   return {
     id: media.id,
@@ -38,5 +40,6 @@ export function toMediaView(media: {
     sizeBytes: media.sizeBytes === null ? null : Number(media.sizeBytes),
     altText: media.altText,
     storagePath: media.storagePath,
+    createdAt: media.createdAt.toISOString(),
   };
 }

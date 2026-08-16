@@ -74,6 +74,19 @@ export class OrderRepository {
   }
 
   /**
+   * Store-scoped SUM of grand_total across ALL orders (Phase 25 — dashboard
+   * stats). One aggregate query replaces the browser-side paginated sum loop
+   * (which made up to 50 sequential API requests for a 5,000-order store).
+   */
+  async sumGrandTotal(storeId: string): Promise<bigint | null> {
+    const result = await this.prisma.order.aggregate({
+      where: { storeId },
+      _sum: { grandTotal: true },
+    });
+    return result._sum.grandTotal;
+  }
+
+  /**
    * Concurrency-safe lifecycle transition (docs/DATABASE.md §26.2/§28.4 —
    * guarded conditional UPDATE WHERE status = from). Only when the UPDATE
    * affects exactly one row is the transition applied; 0 means a concurrent

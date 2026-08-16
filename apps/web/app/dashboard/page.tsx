@@ -4,9 +4,12 @@ import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useI18n } from '@/lib/i18n/i18n-context';
 import { useAuth } from '@/lib/auth/auth-context';
-import { catalogApi } from '@/lib/api/catalog';
-import { ordersApi } from '@/lib/api/orders';
-import type { OrderSummaryView, ProductView } from '@/lib/api/types';
+import { dashboardApi } from '@/lib/api/dashboard';
+import type {
+  DashboardOrderSummary,
+  DashboardRecentProduct,
+  DashboardStatsView,
+} from '@/lib/api/types';
 import { Card } from '@/components/ui/Card';
 import { StatusBadge } from '@/components/ui/Badge';
 import { ErrorState } from '@/components/ui/ErrorState';
@@ -15,51 +18,30 @@ import { formatEgpHtml, formatDate } from '@/lib/utils';
 import { apiErrorMessage } from '@/lib/i18n/api-error';
 
 /**
- * Real dashboard metrics. Every number comes from the backend:
- * - product/category counts from the catalog collection meta
- * - order count + recent orders from GET /orders
- * - revenue is the sum of grandTotal across ALL real orders (paginated).
- *   No metric is hardcoded; anything the backend cannot provide is omitted.
+ * Real dashboard metrics (Phase 25 — performance audit).
+ *
+ * Every number comes from a SINGLE backend request (GET /dashboard/stats):
+ * - product counts by status, category count (one grouped query)
+ * - order total + recent orders
+ * - revenue as a server-side SUM(grand_total) aggregate
+ * - recent products (lean projection, no media join)
+ *
+ * The old implementation fired six parallel collection requests PLUS a
+ * browser-side paginated revenue sum (up to 50 sequential requests for a
+ * 5,000-order store) — replaced by one request with parallel DB aggregates.
  */
-const REVENUE_MAX_PAGES = 50; // safety cap (50 pages × 100 orders)
-
-interface DashboardStats {
-  products: { total: number; active: number; drafts: number; archived: number };
-  categories: number;
-  orders: { total: number; recent: OrderSummaryView[] };
-  revenue: number | null;
-  revenueCapped: boolean;
-  recentProducts: ProductView[];
-}
-
-const EMPTY_STATS: DashboardStats = {
+const EMPTY_STATS: DashboardStatsView = {
   products: { total: 0, active: 0, drafts: 0, archived: 0 },
   categories: 0,
   orders: { total: 0, recent: [] },
   revenue: null,
-  revenueCapped: false,
   recentProducts: [],
 };
-
-/** Sums grandTotal across all orders via the real paginated API. */
-async function fetchTotalRevenue(): Promise<{ revenue: number | null; capped: boolean }> {
-  let total = 0;
-  let page = 1;
-  while (page <= REVENUE_MAX_PAGES) {
-    const result = await ordersApi.listOrders({ page, limit: 100 });
-    for (const order of result.data) {
-      total += order.grandTotal;
-    }
-    if (page >= result.meta.totalPages) break;
-    page += 1;
-  }
-  return { revenue: total, capped: page > REVENUE_MAX_PAGES };
-}
 
 export default function DashboardPage() {
   const { user, store } = useAuth();
   const { t } = useI18n();
-  const [stats, setStats] = useState<DashboardStats>(EMPTY_STATS);
+  const [stats, setStats] = useState<DashboardStatsView>(EMPTY_STATS);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -67,45 +49,12 @@ export default function DashboardPage() {
     setLoading(true);
     setError(null);
     try {
-      const [productsAll, productsActive, productsDraft, productsArchived, categories, orders] =
-        await Promise.all([
-          catalogApi.listProducts({ page: 1, limit: 5 }),
-          catalogApi.listProducts({ status: 'ACTIVE', page: 1, limit: 1 }),
-          catalogApi.listProducts({ status: 'DRAFT', page: 1, limit: 1 }),
-          catalogApi.listProducts({ status: 'ARCHIVED', page: 1, limit: 1 }),
-          catalogApi.listCategories({ page: 1, limit: 1 }),
-          ordersApi.listOrders({ page: 1, limit: 5 }),
-        ]);
-      setStats({
-        products: {
-          total: productsAll.meta.total,
-          active: productsActive.meta.total,
-          drafts: productsDraft.meta.total,
-          archived: productsArchived.meta.total,
-        },
-        categories: categories.meta.total,
-        orders: {
-          total: orders.meta.total,
-          recent: orders.data,
-        },
-        revenue: null,
-        revenueCapped: false,
-        recentProducts: productsAll.data,
-      });
+      const result = await dashboardApi.getStats();
+      setStats(result.data);
     } catch (caught) {
       setError(apiErrorMessage(caught, t, 'dashboard.title'));
     } finally {
       setLoading(false);
-    }
-
-    // Revenue is a real paginated sum of ALL orders. It is computed in the
-    // background so the rest of the dashboard renders immediately; until it
-    // resolves the revenue card shows "—".
-    try {
-      const { revenue, capped } = await fetchTotalRevenue();
-      setStats((current) => ({ ...current, revenue, revenueCapped: capped }));
-    } catch {
-      // Revenue remains null -> the UI shows '—' (not available).
     }
   }, [t]);
 
@@ -215,24 +164,21 @@ export default function DashboardPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {stats.recentProducts.map((product: ProductView) => {
-                    const activeVariant = product.variants.find((v) => v.status === 'ACTIVE');
-                    return (
-                      <tr key={product.id}>
-                        <td>
-                          <Link href={`/dashboard/products/${product.id}`} className="link">
-                            {product.name}
-                          </Link>
-                          <span className="table__muted">/{product.slug}</span>
-                        </td>
-                        <td>
-                          <StatusBadge status={product.status} />
-                        </td>
-                        <td>{product.variants.length}</td>
-                        <td>{formatEgpHtml(activeVariant?.price)}</td>
-                      </tr>
-                    );
-                  })}
+                  {stats.recentProducts.map((product: DashboardRecentProduct) => (
+                    <tr key={product.id}>
+                      <td>
+                        <Link href={`/dashboard/products/${product.id}`} className="link">
+                          {product.name}
+                        </Link>
+                        <span className="table__muted">/{product.slug}</span>
+                      </td>
+                      <td>
+                        <StatusBadge status={product.status} />
+                      </td>
+                      <td>{product.variantsCount}</td>
+                      <td>{formatEgpHtml(product.price)}</td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             )}
@@ -264,7 +210,7 @@ export default function DashboardPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {stats.orders.recent.map((order: OrderSummaryView) => (
+                  {stats.orders.recent.map((order: DashboardOrderSummary) => (
                     <tr key={order.id}>
                       <td>
                         <Link href={`/dashboard/orders/${order.id}`} className="link">

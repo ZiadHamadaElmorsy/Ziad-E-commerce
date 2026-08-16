@@ -57,6 +57,9 @@ export function validate(config: Record<string, unknown>): Record<string, unknow
     'RESERVATION_EXPIRY_INTERVAL_MS',
     'RESERVATION_EXPIRY_BATCH_SIZE',
     'MEDIA_MAX_UPLOAD_BYTES',
+    'AUTH_VERIFY_CACHE_TTL_MS',
+    'TENANT_RESOLUTION_CACHE_TTL_MS',
+    'STOREFRONT_RESOLUTION_CACHE_TTL_MS',
   ] as const;
 
   for (const name of positiveIntVars) {

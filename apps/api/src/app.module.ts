@@ -27,6 +27,7 @@ import { CmsModule } from './cms/cms.module';
 import { MediaModule } from './media/media.module';
 import { JobsModule } from './jobs/jobs.module';
 import { SubscriptionModule } from './subscription/subscription.module';
+import { DashboardModule } from './dashboard/dashboard.module';
 
 @Module({
   imports: [
@@ -72,6 +73,8 @@ import { SubscriptionModule } from './subscription/subscription.module';
     WhatsappModule,
     CmsModule,
     MediaModule,
+    // Phase 25 — aggregated dashboard metrics endpoint.
+    DashboardModule,
     // Phase 21 — periodic maintenance jobs (cart/reservation expiry sweep).
     JobsModule,
   ],

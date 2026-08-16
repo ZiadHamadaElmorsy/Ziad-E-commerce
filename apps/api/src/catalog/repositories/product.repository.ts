@@ -124,12 +124,36 @@ export class ProductRepository {
       skip: filter.skip,
       take: filter.take,
       orderBy: filter.orderBy,
-      include: this.productInclude(),
+      include: this.productListInclude(),
     });
   }
 
   async count(storeId: string, filter: ProductListFilter): Promise<number> {
     return this.prisma.product.count({ where: this.buildWhere(storeId, filter) });
+  }
+
+  /**
+   * Product counts grouped by lifecycle status (Phase 25 — dashboard stats).
+   * ONE grouped query replaces the four parallel status-filtered counts the
+   * dashboard used to fire.
+   */
+  async countByStatus(
+    storeId: string,
+  ): Promise<Record<ProductStatus, number>> {
+    const grouped = await this.prisma.product.groupBy({
+      by: ['status'],
+      where: { storeId },
+      _count: { _all: true },
+    });
+    const counts: Record<ProductStatus, number> = {
+      DRAFT: 0,
+      ACTIVE: 0,
+      ARCHIVED: 0,
+    };
+    for (const row of grouped) {
+      counts[row.status] = row._count._all;
+    }
+    return counts;
   }
 
   /** Variants (ascending) + ordered product images used by every product view. */
@@ -140,6 +164,19 @@ export class ProductRepository {
         include: { media: true },
         orderBy: { sortOrder: 'asc' as const },
       },
+    };
+  }
+
+  /**
+   * Lean list include (Phase 25 — payload/query audit). Collection endpoints
+   * fetch variants (price display) but NOT the product_media -> media join:
+   * the list only renders names, statuses and prices. Full media is loaded by
+   * the product detail path (findById with includeVariants=true) and by the
+   * storefront (which needs thumbnails).
+   */
+  private productListInclude() {
+    return {
+      variants: { orderBy: { createdAt: 'asc' as const } },
     };
   }
 

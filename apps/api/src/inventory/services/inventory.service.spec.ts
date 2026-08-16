@@ -7,6 +7,7 @@ import {
   ValidationError,
 } from '../../common/errors/domain-exceptions';
 import { TransactionService } from '../../infrastructure/database/transaction.service';
+import { ProductRepository } from '../../catalog/repositories/product.repository';
 import { ProductVariantRepository } from '../../catalog/repositories/product-variant.repository';
 import { AdjustInventoryDto } from '../dto/adjust-inventory.dto';
 import { ListMovementsQueryDto } from '../dto/list-movements-query.dto';
@@ -16,10 +17,12 @@ import { InventoryService } from './inventory.service';
 
 describe('InventoryService', () => {
   let requestContext: { getCurrent: jest.Mock };
-  let variants: { findById: jest.Mock };
+  let variants: { findById: jest.Mock; findByProductId: jest.Mock };
+  let products: { findById: jest.Mock };
   let inventory: {
     findByVariant: jest.Mock;
     findByVariantTx: jest.Mock;
+    findManyByVariantIds: jest.Mock;
     create: jest.Mock;
     guardedAdjust: jest.Mock;
     guardedReserve: jest.Mock;
@@ -70,10 +73,12 @@ describe('InventoryService', () => {
 
   beforeEach(() => {
     requestContext = { getCurrent: jest.fn() };
-    variants = { findById: jest.fn() };
+    variants = { findById: jest.fn(), findByProductId: jest.fn() };
+    products = { findById: jest.fn() };
     inventory = {
       findByVariant: jest.fn(),
       findByVariantTx: jest.fn(),
+      findManyByVariantIds: jest.fn(),
       create: jest.fn(),
       guardedAdjust: jest.fn(),
       guardedReserve: jest.fn(),
@@ -90,6 +95,7 @@ describe('InventoryService', () => {
     service = new InventoryService(
       requestContext as unknown as RequestContextService,
       variants as unknown as ProductVariantRepository,
+      products as unknown as ProductRepository,
       inventory as unknown as InventoryRepository,
       movements as unknown as InventoryMovementRepository,
       transaction as unknown as TransactionService,
@@ -278,6 +284,55 @@ describe('InventoryService', () => {
         5,
       );
     });
+
+  describe('listByProduct (Phase 25 — aggregate product inventory)', () => {
+    it('returns inventory rows for every initialized variant of the product', async () => {
+      withTenant();
+      products.findById.mockResolvedValue({ id: 'product-1', storeId: 'store-1' });
+      variants.findByProductId.mockResolvedValue([
+        { ...variantRow, id: 'variant-1' },
+        { ...variantRow, id: 'variant-2' },
+      ]);
+      inventory.findManyByVariantIds.mockResolvedValue([
+        { ...inventoryRow, variantId: 'variant-1', onHandQuantity: 10, reservedQuantity: 3 },
+        { ...inventoryRow, variantId: 'variant-2', onHandQuantity: 7, reservedQuantity: 0 },
+      ]);
+
+      const result = await service.listByProduct('product-1');
+
+      expect(result).toEqual([
+        { variantId: 'variant-1', onHand: 10, reserved: 3, available: 7 },
+        { variantId: 'variant-2', onHand: 7, reserved: 0, available: 7 },
+      ]);
+      expect(products.findById).toHaveBeenCalledWith('store-1', 'product-1');
+      expect(inventory.findManyByVariantIds).toHaveBeenCalledWith('store-1', [
+        'variant-1',
+        'variant-2',
+      ]);
+    });
+
+    it('omits variants that were never initialized (the UI renders them as not-set)', async () => {
+      withTenant();
+      products.findById.mockResolvedValue({ id: 'product-1', storeId: 'store-1' });
+      variants.findByProductId.mockResolvedValue([{ ...variantRow, id: 'variant-1' }]);
+      inventory.findManyByVariantIds.mockResolvedValue([]);
+
+      const result = await service.listByProduct('product-1');
+
+      expect(result).toEqual([]);
+    });
+
+    it('fails closed for a product outside the current store', async () => {
+      withTenant();
+      products.findById.mockResolvedValue(null);
+
+      await expect(service.listByProduct('foreign-product')).rejects.toBeInstanceOf(
+        NotFoundError,
+      );
+      expect(variants.findByProductId).not.toHaveBeenCalled();
+      expect(inventory.findManyByVariantIds).not.toHaveBeenCalled();
+    });
+  });
   });
 
   describe('listMovements', () => {

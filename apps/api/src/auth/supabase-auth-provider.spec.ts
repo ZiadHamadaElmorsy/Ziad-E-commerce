@@ -97,4 +97,89 @@ describe('SupabaseAuthProvider', () => {
     expect(error).toBeInstanceOf(UnauthorizedError);
     expect(error.message).not.toContain(token);
   });
+
+  describe('verification memoization (Phase 25)', () => {
+    it('caches a successful verification so the next identical call skips Supabase', async () => {
+      mockSupabaseConfig();
+      (global.fetch as jest.Mock).mockResolvedValue({
+        ok: true,
+        json: async () => ({ id: 'auth-user-1', email: 'owner@example.com' }),
+      });
+
+      const first = await provider.verifyToken(token);
+      const second = await provider.verifyToken(token);
+
+      expect(first).toEqual({ authUserId: 'auth-user-1', email: 'owner@example.com' });
+      expect(second).toEqual(first);
+      expect(global.fetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('never caches a failed verification (a later valid response must be honored)', async () => {
+      mockSupabaseConfig();
+      (global.fetch as jest.Mock)
+        .mockResolvedValueOnce({ ok: false, status: 401 })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ id: 'auth-user-2', email: 'second@example.com' }),
+        });
+
+      await expect(provider.verifyToken(token)).rejects.toBeInstanceOf(UnauthorizedError);
+      const user = await provider.verifyToken(token);
+
+      expect(user.authUserId).toBe('auth-user-2');
+      expect(global.fetch).toHaveBeenCalledTimes(2);
+    });
+
+    it('expires cached verifications after the TTL', async () => {
+      jest.useFakeTimers();
+      try {
+        mockSupabaseConfig();
+        (global.fetch as jest.Mock).mockResolvedValue({
+          ok: true,
+          json: async () => ({ id: 'auth-user-1', email: 'owner@example.com' }),
+        });
+        const ttlProvider = new SupabaseAuthProvider(
+          config as unknown as ConfigService,
+          60_000,
+        );
+
+        await ttlProvider.verifyToken(token);
+        expect(global.fetch).toHaveBeenCalledTimes(1);
+
+        jest.advanceTimersByTime(60_001);
+        await ttlProvider.verifyToken(token);
+        expect(global.fetch).toHaveBeenCalledTimes(2);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('does not cache when the TTL is 0 (caching disabled)', async () => {
+      mockSupabaseConfig();
+      (global.fetch as jest.Mock).mockResolvedValue({
+        ok: true,
+        json: async () => ({ id: 'auth-user-1', email: 'owner@example.com' }),
+      });
+      const noCacheProvider = new SupabaseAuthProvider(config as unknown as ConfigService, 0);
+
+      await noCacheProvider.verifyToken(token);
+      await noCacheProvider.verifyToken(token);
+
+      expect(global.fetch).toHaveBeenCalledTimes(2);
+    });
+
+    it('clearCache drops memoized verifications', async () => {
+      mockSupabaseConfig();
+      (global.fetch as jest.Mock).mockResolvedValue({
+        ok: true,
+        json: async () => ({ id: 'auth-user-1', email: 'owner@example.com' }),
+      });
+
+      await provider.verifyToken(token);
+      provider.clearCache();
+      await provider.verifyToken(token);
+
+      expect(global.fetch).toHaveBeenCalledTimes(2);
+    });
+  });
 });

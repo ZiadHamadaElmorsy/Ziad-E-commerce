@@ -48,6 +48,24 @@ export class MediaRepository {
     return this.prisma.media.findFirst({ where: { id: mediaId, storeId } });
   }
 
+  /**
+   * Store-scoped paginated collection read (Phase 25 — media library). Ordered
+   * newest-first. Only media belonging to the resolved store is ever returned.
+   */
+  async findMany(storeId: string, skip: number, take: number): Promise<Media[]> {
+    return this.prisma.media.findMany({
+      where: { storeId },
+      skip,
+      take,
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  /** Store-scoped media collection count. */
+  async count(storeId: string): Promise<number> {
+    return this.prisma.media.count({ where: { storeId } });
+  }
+
   /** Store-scoped guarded delete (0 rows = not found / cross-tenant id). */
   async deleteByIdInStore(
     tx: Prisma.TransactionClient,

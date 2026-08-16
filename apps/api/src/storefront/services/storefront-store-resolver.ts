@@ -13,6 +13,17 @@ export const STOREFRONT_SLUG_HEADER = 'x-storefront-slug';
 /** Default storefront platform domain (DATABASE §7.2: `store-slug.platform-domain.com`). */
 export const DEFAULT_STOREFRONT_DOMAIN = 'platform-domain.com';
 
+/** Default in-memory memoization TTL for a resolved storefront store (ms). */
+export const DEFAULT_STOREFRONT_RESOLUTION_CACHE_TTL_MS = 60_000;
+
+/** Hard cap on cached storefront resolutions (memory bound; swept on write). */
+export const MAX_STOREFRONT_RESOLUTION_CACHE_ENTRIES = 2_000;
+
+interface CachedStorefrontResolution {
+  store: StorefrontResolvedStore;
+  expiresAt: number;
+}
+
 /** A Store resolved for the public storefront (read-only public context). */
 export interface StorefrontResolvedStore {
   id: string;
@@ -50,16 +61,31 @@ export interface StorefrontResolvedStore {
  */
 @Injectable()
 export class StorefrontStoreResolver {
+  private readonly cache = new Map<string, CachedStorefrontResolution>();
+  private readonly ttlMs: number;
+
   constructor(
     private readonly storefrontRepository: StorefrontRepository,
     private readonly config: ConfigService,
     private readonly subscriptions: SubscriptionService,
-  ) {}
+  ) {
+    const ttl = this.config.get<{ storefrontCacheTtlMs?: number }>('performance')
+      ?.storefrontCacheTtlMs;
+    this.ttlMs =
+      Number.isInteger(ttl) && (ttl as number) >= 0 ? (ttl as number) : 0;
+  }
 
   async resolve(request: Pick<Request, 'headers'>): Promise<StorefrontResolvedStore> {
     const slug = this.resolveSlug(request);
     if (!slug) {
       throw new NotFoundError('The storefront was not found.');
+    }
+
+    if (this.ttlMs > 0) {
+      const cached = this.readCache(slug);
+      if (cached) {
+        return cached;
+      }
     }
 
     const store = await this.storefrontRepository.findStoreBySlug(slug);
@@ -71,7 +97,7 @@ export class StorefrontStoreResolver {
 
     assertStorefrontAvailable(store, subscriptionStatus);
 
-    return {
+    const resolved: StorefrontResolvedStore = {
       id: store.id,
       slug: store.slug,
       name: store.name,
@@ -79,6 +105,48 @@ export class StorefrontStoreResolver {
       currency: store.currency,
       timezone: store.timezone,
     };
+
+    if (this.ttlMs > 0) {
+      this.writeCache(slug, resolved);
+    }
+
+    return resolved;
+  }
+
+  /** Test/ops hook — drops every memoized resolution. */
+  clearCache(): void {
+    this.cache.clear();
+  }
+
+  private readCache(slug: string): StorefrontResolvedStore | null {
+    const entry = this.cache.get(slug);
+    if (!entry) {
+      return null;
+    }
+    if (entry.expiresAt <= Date.now()) {
+      this.cache.delete(slug);
+      return null;
+    }
+    return entry.store;
+  }
+
+  private writeCache(slug: string, store: StorefrontResolvedStore): void {
+    if (this.cache.size >= MAX_STOREFRONT_RESOLUTION_CACHE_ENTRIES) {
+      this.sweepExpired();
+    }
+    if (this.cache.size >= MAX_STOREFRONT_RESOLUTION_CACHE_ENTRIES) {
+      this.cache.clear();
+    }
+    this.cache.set(slug, { store, expiresAt: Date.now() + this.ttlMs });
+  }
+
+  private sweepExpired(): void {
+    const now = Date.now();
+    for (const [key, entry] of this.cache) {
+      if (entry.expiresAt <= now) {
+        this.cache.delete(key);
+      }
+    }
   }
 
   private resolveSlug(request: Pick<Request, 'headers'>): string | undefined {

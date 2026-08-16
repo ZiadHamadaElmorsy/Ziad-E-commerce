@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { Inventory, MovementType, Prisma } from '@prisma/client';
 import { requireStoreId } from '../../catalog/domain/catalog-tenant';
+import { ProductRepository } from '../../catalog/repositories/product.repository';
 import { ProductVariantRepository } from '../../catalog/repositories/product-variant.repository';
 import { RequestContextService } from '../../common/context/request-context.service';
 import {
@@ -50,6 +51,7 @@ export class InventoryService {
   constructor(
     private readonly requestContext: RequestContextService,
     private readonly variants: ProductVariantRepository,
+    private readonly products: ProductRepository,
     private readonly inventory: InventoryRepository,
     private readonly movements: InventoryMovementRepository,
     private readonly transaction: TransactionService,
@@ -77,6 +79,36 @@ export class InventoryService {
     }
 
     return toInventoryView(inventory);
+  }
+
+  /**
+   * GET /api/v1/products/:productId/inventory (Phase 25 — performance audit)
+   *
+   * Returns the current inventory for EVERY variant of one product in a single
+   * request (two parallel database reads). The product edit screen previously
+   * fired one authenticated API request PER variant (each with its own Supabase
+   * auth + tenant round-trips), which scaled linearly with the variant count.
+   *
+   * Only variants WITH an inventory row are returned (variants that were never
+   * initialized stay absent so the UI renders them as "—"/not-set — the exact
+   * semantics of the per-variant endpoint).
+   */
+  async listByProduct(productId: string): Promise<InventoryView[]> {
+    const storeId = requireStoreId(this.requestContext);
+
+    // Fail closed on a product outside the current store BEFORE any inventory
+    // data is touched (no cross-tenant existence leak).
+    const product = await this.products.findById(storeId, productId);
+    if (!product) {
+      throw new NotFoundError('The product was not found.');
+    }
+
+    const variantIds = (await this.variants.findByProductId(storeId, productId)).map(
+      (variant) => variant.id,
+    );
+
+    const rows = await this.inventory.findManyByVariantIds(storeId, variantIds);
+    return rows.map(toInventoryView);
   }
 
   /**

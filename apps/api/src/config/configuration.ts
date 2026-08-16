@@ -130,6 +130,29 @@ export interface MediaConfig {
   allowedMimeTypes: string[];
 }
 
+/**
+ * Phase 25 — production performance knobs.
+ *
+ * Short-TTL in-memory caches that remove the per-request Supabase round-trips
+ * from hot paths. Both caches are bounded and default to 60s (see the auth
+ * provider / tenant service for the exact security trade-offs). Set a value to
+ * `0` to disable a cache entirely.
+ */
+export interface PerformanceConfig {
+  /** Memoized Supabase token-verification TTL (AUTH_VERIFY_CACHE_TTL_MS). */
+  authVerifyCacheTtlMs: number;
+  /** Memoized tenant-resolution TTL (TENANT_RESOLUTION_CACHE_TTL_MS). */
+  tenantCacheTtlMs: number;
+  /**
+   * Memoized public storefront store-resolution TTL
+   * (STOREFRONT_RESOLUTION_CACHE_TTL_MS). Store name/slug/description and the
+   * subscription availability status are read-heavy, change rarely, and are
+   * resolved on EVERY public storefront request (store, theme, navigation,
+   * products, cart, checkout).
+   */
+  storefrontCacheTtlMs: number;
+}
+
 export interface AppConfiguration {
   nodeEnv: string;
   port: number;
@@ -152,6 +175,8 @@ export interface AppConfiguration {
   security: SecurityConfig;
   /** Phase 23 — reverse-proxy trust for correct client IPs (rate limiting). */
   proxy: ProxyConfig;
+  /** Phase 25 — short-TTL performance caches (auth verification / tenant resolution). */
+  performance: PerformanceConfig;
 }
 
 /** Parses a comma-separated env list into a trimmed non-empty string array. */
@@ -265,6 +290,17 @@ export default (): AppConfiguration => {
         'image/gif',
         'image/avif',
       ]),
+    },
+    performance: {
+      // Caching is DISABLED under NODE_ENV=test so e2e suites that stub the
+      // database keep full isolation (a memoized tenant/auth result would
+      // otherwise short-circuit stubbed persistence across tests).
+      authVerifyCacheTtlMs:
+        nodeEnv === 'test' ? 0 : parseIntOr(process.env.AUTH_VERIFY_CACHE_TTL_MS, 60_000),
+      tenantCacheTtlMs:
+        nodeEnv === 'test' ? 0 : parseIntOr(process.env.TENANT_RESOLUTION_CACHE_TTL_MS, 60_000),
+      storefrontCacheTtlMs:
+        nodeEnv === 'test' ? 0 : parseIntOr(process.env.STOREFRONT_RESOLUTION_CACHE_TTL_MS, 60_000),
     },
     supabase: {
       url: process.env.SUPABASE_URL,

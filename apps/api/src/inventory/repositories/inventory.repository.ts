@@ -32,6 +32,21 @@ export class InventoryRepository {
     });
   }
 
+  /**
+   * Store-scoped batch read for a product's variants (Phase 25 — performance
+   * audit). Returns ONLY variants that have an inventory row; variants that
+   * were never initialized are intentionally absent (the merchant dashboard
+   * renders those as "—"/not-set).
+   */
+  async findManyByVariantIds(storeId: string, variantIds: string[]): Promise<Inventory[]> {
+    if (variantIds.length === 0) {
+      return [];
+    }
+    return this.prisma.inventory.findMany({
+      where: { storeId, variantId: { in: variantIds } },
+    });
+  }
+
   /** Store-scoped inventory read inside the caller's transaction. */
   async findByVariantTx(
     tx: Prisma.TransactionClient,

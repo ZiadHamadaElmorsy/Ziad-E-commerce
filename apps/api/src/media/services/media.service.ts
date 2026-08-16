@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { requireStoreId } from '../../catalog/domain/catalog-tenant';
+import { buildPaginationMeta, PaginatedView } from '../../catalog/catalog.types';
 import { RequestContextService } from '../../common/context/request-context.service';
 import {
   ConflictError,
@@ -11,6 +12,7 @@ import { TransactionService } from '../../infrastructure/database/transaction.se
 import { toMediaView, MediaView } from '../media.types';
 import { mapMediaWriteError } from '../domain/media-error.mapper';
 import { buildStorageKey, generateMediaId } from '../domain/media-storage-keys';
+import { ListMediaQueryDto } from '../dto/list-media-query.dto';
 import {
   DEFAULT_ALLOWED_IMAGE_MIME_TYPES,
   deriveMediaType,
@@ -115,6 +117,27 @@ export class MediaService {
       throw new NotFoundError('The media asset was not found.');
     }
     return toMediaView(media);
+  }
+
+  /**
+   * GET /api/v1/media — store-scoped paginated media library (Phase 25).
+   * Two parallel queries (rows + count) return a bounded page ordered
+   * newest-first; merchants with hundreds of media files never download the
+   * whole library into the browser.
+   */
+  async list(query: ListMediaQueryDto): Promise<PaginatedView<MediaView>> {
+    const storeId = requireStoreId(this.requestContext);
+    const skip = (query.page - 1) * query.limit;
+
+    const [items, total] = await Promise.all([
+      this.media.findMany(storeId, skip, query.limit),
+      this.media.count(storeId),
+    ]);
+
+    return {
+      items: items.map(toMediaView),
+      meta: buildPaginationMeta(query.page, query.limit, total),
+    };
   }
 
   /**

@@ -1,16 +1,19 @@
-import { api, apiUpload } from './client';
+import { api, apiUpload, toQueryString } from './client';
 import { appConfig } from '@/lib/config';
-import type { Envelope, MediaView } from './types';
+import type { Envelope, ListMediaParams, MediaView, Paginated } from './types';
 
 /**
  * Media API — every call hits the real backend
  * (POST/GET/DELETE /api/v1/media, docs/API-SPEC.md §29).
  *
- * The backend exposes upload (raw binary), read (metadata), content (binary
- * stream for the merchant dashboard) and delete. There is NO list endpoint in
- * the API-SPEC, so the media UI does not fake one.
+ * Phase 25 adds the paginated media library read (GET /api/v1/media) so the
+ * dashboard media page can list previously uploaded assets server-side instead
+ * of being limited to the file just selected.
  */
 export const mediaApi = {
+  listMedia: (params: ListMediaParams = {}) =>
+    api.get<Paginated<MediaView>>(`/media${toQueryString({ ...params })}`),
+
   upload: (file: File, altText?: string) =>
     apiUpload<Envelope<MediaView>>(
       '/media',

@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { useI18n } from '@/lib/i18n/i18n-context';
 import { mediaApi } from '@/lib/api/media';
 import type { MediaView } from '@/lib/api/types';
@@ -9,9 +9,16 @@ import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Field, Input } from '@/components/ui/FormControls';
 import { StatusBadge } from '@/components/ui/Badge';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { ErrorState } from '@/components/ui/ErrorState';
+import { Pagination } from '@/components/ui/Pagination';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { useToast } from '@/components/ui/Toast';
+import { DashboardMediaImage } from '@/components/dashboard/DashboardMediaImage';
 import { apiErrorMessage } from '@/lib/i18n/api-error';
+import { formatDate } from '@/lib/utils';
+
+const PAGE_SIZE = 12;
 
 function formatBytes(bytes: number | null): string {
   if (bytes === null) return '—';
@@ -23,27 +30,55 @@ function formatBytes(bytes: number | null): string {
 /**
  * Media management (docs/API-SPEC.md §29).
  *
- * The backend exposes upload (raw binary), read (metadata) and delete. There
- * is NO list endpoint, so this page supports the real upload/read/delete flow
- * and clearly states that previously uploaded assets cannot be listed yet.
- * The preview uses the file the merchant just selected (browser object URL) —
- * no fake media data is ever shown.
+ * Phase 25 adds a REAL paginated media library (GET /api/v1/media): previously
+ * uploaded assets are listed server-side (newest first) with thumbnails
+ * (lazy-loaded via the authenticated content endpoint) and per-asset delete.
+ * Upload remains a direct server upload; after a successful upload or delete
+ * the library refreshes in place.
  */
 export default function MediaPage() {
   const { t } = useI18n();
   const toast = useToast();
 
+  // --- Upload form ---------------------------------------------------------
   const [file, setFile] = useState<File | null>(null);
   const [altText, setAltText] = useState('');
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const previewObjectUrl = useRef<string | null>(null);
 
-  const [uploaded, setUploaded] = useState<MediaView | null>(null);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [deleteOpen, setDeleteOpen] = useState(false);
+  // --- Library -------------------------------------------------------------
+  const [items, setItems] = useState<MediaView[]>([]);
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(0);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<MediaView | null>(null);
   const [deleting, setDeleting] = useState(false);
 
-  const previewObjectUrl = useRef<string | null>(null);
+  const loadLibrary = useCallback(
+    async (targetPage: number) => {
+      setLoading(true);
+      setError(null);
+      try {
+        const result = await mediaApi.listMedia({ page: targetPage, limit: PAGE_SIZE });
+        setItems(result.data);
+        setTotalPages(result.meta.totalPages);
+        setTotal(result.meta.total);
+      } catch (caught) {
+        setError(apiErrorMessage(caught, t, 'media.libraryLoadFailed'));
+      } finally {
+        setLoading(false);
+      }
+    },
+    [t],
+  );
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void loadLibrary(page);
+  }, [loadLibrary, page]);
 
   const handleFileChange = (next: File | null) => {
     if (previewObjectUrl.current) {
@@ -51,13 +86,7 @@ export default function MediaPage() {
       previewObjectUrl.current = null;
     }
     setFile(next);
-    setPreviewUrl(null);
-    setUploaded(null);
     setUploadError(null);
-    if (next) {
-      previewObjectUrl.current = URL.createObjectURL(next);
-      setPreviewUrl(previewObjectUrl.current);
-    }
   };
 
   const handleUpload = async (event: FormEvent) => {
@@ -66,9 +95,13 @@ export default function MediaPage() {
     setUploading(true);
     setUploadError(null);
     try {
-      const result = await mediaApi.upload(file, altText || undefined);
-      setUploaded(result.data);
+      await mediaApi.upload(file, altText || undefined);
       toast.success(t('media.uploadedToast'));
+      setFile(null);
+      setAltText('');
+      // Show the newest asset: jump to page 1 of the library.
+      if (page !== 1) setPage(1);
+      else void loadLibrary(1);
     } catch (caught) {
       setUploadError(apiErrorMessage(caught, t, 'media.uploadFailed'));
     } finally {
@@ -77,21 +110,24 @@ export default function MediaPage() {
   };
 
   const runDelete = async () => {
-    if (!uploaded) return;
+    if (!deleteTarget) return;
     setDeleting(true);
     try {
-      await mediaApi.deleteMedia(uploaded.id);
+      await mediaApi.deleteMedia(deleteTarget.id);
       toast.success(t('media.deletedToast'));
-      setDeleteOpen(false);
-      handleFileChange(null);
+      setDeleteTarget(null);
+      // If the last item on this page was removed, step back a page.
+      if (items.length === 1 && page > 1) {
+        setPage((current) => current - 1);
+      } else {
+        void loadLibrary(page);
+      }
     } catch (caught) {
       toast.error(apiErrorMessage(caught, t, 'media.deleteFailed'));
     } finally {
       setDeleting(false);
     }
   };
-
-  const isImage = uploaded?.mediaType === 'IMAGE';
 
   return (
     <div className="page">
@@ -102,6 +138,7 @@ export default function MediaPage() {
           {uploadError}
         </div>
       ) : null}
+
 
       <div className="detail-grid">
         <div className="detail-grid__main">
@@ -129,82 +166,83 @@ export default function MediaPage() {
                 </Button>
               </div>
             </form>
-
-            <p className="card__muted note">{t('media.libraryNote')}</p>
           </Card>
 
-          {uploaded ? (
-            <Card title={t('media.uploadedTitle')}>
-              <div className="media-preview">
-                {isImage && previewUrl ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={previewUrl}
-                    alt={uploaded.altText ?? 'Uploaded asset'}
-                    className="media-preview__image"
-                  />
-                ) : (
-                  <div className="media-preview__fallback" aria-hidden="true">
-                    {uploaded.mediaType === 'VIDEO' ? '▶' : '▤'}
+          <Card title={t('media.libraryTitle')} description={t('media.libraryDesc')}>
+            {error ? (
+              <ErrorState message={error} onRetry={() => void loadLibrary(page)} />
+            ) : loading ? (
+              <div className="media-grid" aria-busy="true">
+                {Array.from({ length: PAGE_SIZE }).map((_, index) => (
+                  <div className="media-card media-card--skeleton" key={index} aria-hidden="true">
+                    <span className="skeleton skeleton--block" />
+                    <span className="skeleton skeleton--line" />
                   </div>
-                )}
-
-                <dl className="meta-list">
-                  <div>
-                    <dt>{t('media.type')}</dt>
-                    <dd>
-                      <StatusBadge status={uploaded.mediaType} />
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>{t('media.mimeType')}</dt>
-                    <dd>{uploaded.mimeType ?? '—'}</dd>
-                  </div>
-                  <div>
-                    <dt>{t('media.size')}</dt>
-                    <dd>{formatBytes(uploaded.sizeBytes)}</dd>
-                  </div>
-                  <div>
-                    <dt>{t('media.altTextValue')}</dt>
-                    <dd>{uploaded.altText ?? '—'}</dd>
-                  </div>
-                  <div>
-                    <dt>{t('media.id')}</dt>
-                    <dd className="meta-list__mono">{uploaded.id}</dd>
-                  </div>
-                </dl>
-
-                {!isImage ? <p className="card__muted">{t('media.notPreviewable')}</p> : null}
-
-                <div className="form-actions">
-                  <Button variant="danger" onClick={() => setDeleteOpen(true)}>
-                    {t('media.delete')}
-                  </Button>
-                </div>
+                ))}
               </div>
-            </Card>
-          ) : (
-            <Card>
-              <div className="empty-state">
-                <div className="empty-state__icon" aria-hidden="true">
-                  ◧
+            ) : items.length === 0 ? (
+              <EmptyState
+                icon="◧"
+                title={t('media.libraryEmpty')}
+                description={t('media.libraryEmptyDesc')}
+              />
+            ) : (
+              <>
+                <div className="media-grid">
+                  {items.map((media) => (
+                    <div className="media-card" key={media.id}>
+                      <div className="media-card__thumb">
+                        {media.mediaType === 'IMAGE' ? (
+                          <DashboardMediaImage mediaId={media.id} alt={media.altText} />
+                        ) : (
+                          <div className="media-thumb media-thumb--placeholder" aria-hidden="true">
+                            {media.mediaType === 'VIDEO' ? '▶' : '▤'}
+                          </div>
+                        )}
+                      </div>
+                      <div className="media-card__body">
+                        <div className="media-card__meta">
+                          <StatusBadge status={media.mediaType} />
+                          <span className="media-card__size">{formatBytes(media.sizeBytes)}</span>
+                        </div>
+                        <p className="media-card__alt" title={media.altText ?? undefined}>
+                          {media.altText ?? '—'}
+                        </p>
+                        <p className="media-card__date">
+                          {t('media.date')}: {formatDate(media.createdAt)}
+                        </p>
+                        <Button
+                          variant="danger"
+                          size="sm"
+                          onClick={() => setDeleteTarget(media)}
+                        >
+                          {t('media.delete')}
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
                 </div>
-                <h3 className="empty-state__title">{t('media.emptyTitle')}</h3>
-                <p className="empty-state__description">{t('media.emptyDesc')}</p>
-              </div>
-            </Card>
-          )}
+
+                <Pagination
+                  page={page}
+                  totalPages={totalPages}
+                  total={total}
+                  onPageChange={(next) => setPage(next)}
+                />
+              </>
+            )}
+          </Card>
         </div>
       </div>
 
       <ConfirmDialog
-        open={deleteOpen}
+        open={deleteTarget !== null}
         title={t('media.deleteConfirmTitle')}
         description={t('media.deleteConfirmDesc')}
         confirmLabel={t('media.delete')}
         loading={deleting}
         onConfirm={() => void runDelete()}
-        onCancel={() => setDeleteOpen(false)}
+        onCancel={() => setDeleteTarget(null)}
       />
     </div>
   );

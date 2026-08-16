@@ -155,4 +155,96 @@ describe('TenantContextService', () => {
     const tenant = await service.resolveForUser('auth-1', 'store-1');
     expect(tenant.store.id).toBe('store-1');
   });
+
+  describe('resolution memoization (Phase 25)', () => {
+    it('caches a successful resolution so the next identical call skips the database', async () => {
+      prisma.storeMembership.findMany.mockResolvedValue([
+        membership('m-1', 'store-1', 'OWNER', {
+          id: 'store-1',
+          slug: 'my-store',
+          name: 'My Store',
+          status: 'ACTIVE',
+        }),
+      ]);
+
+      await service.resolveForUser('auth-1');
+      await service.resolveForUser('auth-1');
+
+      expect(prisma.storeMembership.findMany).toHaveBeenCalledTimes(1);
+    });
+
+    it('uses separate cache entries per candidate store', async () => {
+      prisma.storeMembership.findMany.mockResolvedValue([
+        membership('m-1', 'store-1', 'OWNER', {
+          id: 'store-1',
+          slug: 'my-store',
+          name: 'My Store',
+          status: 'ACTIVE',
+        }),
+        membership('m-2', 'store-2', 'ADMIN', {
+          id: 'store-2',
+          slug: 'other-store',
+          name: 'Other Store',
+          status: 'ACTIVE',
+        }),
+      ]);
+
+      await service.resolveForUser('auth-1', 'store-1');
+      await service.resolveForUser('auth-1', 'store-2');
+      await service.resolveForUser('auth-1', 'store-1');
+
+      expect(prisma.storeMembership.findMany).toHaveBeenCalledTimes(2);
+    });
+
+    it('never caches authorization failures (a later membership must resolve)', async () => {
+      prisma.storeMembership.findMany.mockResolvedValueOnce([]).mockResolvedValueOnce([
+        membership('m-1', 'store-1', 'OWNER', {
+          id: 'store-1',
+          slug: 'my-store',
+          name: 'My Store',
+          status: 'ACTIVE',
+        }),
+      ]);
+
+      await expect(service.resolveForUser('auth-1')).rejects.toBeInstanceOf(ForbiddenError);
+      const tenant = await service.resolveForUser('auth-1');
+
+      expect(tenant.store.id).toBe('store-1');
+      expect(prisma.storeMembership.findMany).toHaveBeenCalledTimes(2);
+    });
+
+    it('clearCache drops memoized resolutions', async () => {
+      prisma.storeMembership.findMany.mockResolvedValue([
+        membership('m-1', 'store-1', 'OWNER', {
+          id: 'store-1',
+          slug: 'my-store',
+          name: 'My Store',
+          status: 'ACTIVE',
+        }),
+      ]);
+
+      await service.resolveForUser('auth-1');
+      service.clearCache();
+      await service.resolveForUser('auth-1');
+
+      expect(prisma.storeMembership.findMany).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not cache when the TTL is 0 (caching disabled)', async () => {
+      prisma.storeMembership.findMany.mockResolvedValue([
+        membership('m-1', 'store-1', 'OWNER', {
+          id: 'store-1',
+          slug: 'my-store',
+          name: 'My Store',
+          status: 'ACTIVE',
+        }),
+      ]);
+      const noCache = new TenantContextService(prisma as unknown as PrismaService, 0);
+
+      await noCache.resolveForUser('auth-1');
+      await noCache.resolveForUser('auth-1');
+
+      expect(prisma.storeMembership.findMany).toHaveBeenCalledTimes(2);
+    });
+  });
 });

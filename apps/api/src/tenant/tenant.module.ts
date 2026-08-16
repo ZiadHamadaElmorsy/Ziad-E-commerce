@@ -1,7 +1,12 @@
 import { Global, Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
+import { ConfigService } from '@nestjs/config';
+import { PrismaService } from '../prisma/prisma.service';
 import { TenantContextGuard } from './tenant-context.guard';
-import { TenantContextService } from './tenant-context.service';
+import {
+  DEFAULT_TENANT_RESOLUTION_CACHE_TTL_MS,
+  TenantContextService,
+} from './tenant-context.service';
 
 /**
  * Global tenant boundary.
@@ -13,7 +18,17 @@ import { TenantContextService } from './tenant-context.service';
  */
 @Global()
 @Module({
-  providers: [TenantContextService, { provide: APP_GUARD, useClass: TenantContextGuard }],
+  providers: [
+    {
+      provide: TenantContextService,
+      inject: [PrismaService, ConfigService],
+      useFactory: (prisma: PrismaService, config: ConfigService) => {
+        const ttl = config.get<{ tenantCacheTtlMs?: number }>('performance')?.tenantCacheTtlMs;
+        return new TenantContextService(prisma, ttl ?? DEFAULT_TENANT_RESOLUTION_CACHE_TTL_MS);
+      },
+    },
+    { provide: APP_GUARD, useClass: TenantContextGuard },
+  ],
   exports: [TenantContextService],
 })
 export class TenantModule {}

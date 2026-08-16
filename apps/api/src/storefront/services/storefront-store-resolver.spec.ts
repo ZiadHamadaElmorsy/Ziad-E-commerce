@@ -190,4 +190,69 @@ describe('StorefrontStoreResolver', () => {
       ).rejects.toThrow(NotFoundError);
     });
   });
+
+  describe('resolution memoization (Phase 25)', () => {
+    function cachedResolver(ttlMs: number): StorefrontStoreResolver {
+      const configWithTtl: { get: jest.Mock } = {
+        get: jest.fn((key: string) => {
+          if (key === 'performance') {
+            return { storefrontCacheTtlMs: ttlMs };
+          }
+          return 'platform-domain.com';
+        }),
+      };
+      return new StorefrontStoreResolver(
+        storefrontRepository as unknown as StorefrontRepository,
+        configWithTtl as unknown as ConfigService,
+        subscriptions as unknown as SubscriptionService,
+      );
+    }
+
+    it('caches a successful resolution so the next identical request skips the database', async () => {
+      storefrontRepository.findStoreBySlug.mockResolvedValue(storeRow);
+      const caching = cachedResolver(60_000);
+
+      await caching.resolve(requestWith({ 'x-storefront-slug': 'my-store' }));
+      await caching.resolve(requestWith({ 'x-storefront-slug': 'my-store' }));
+
+      expect(storefrontRepository.findStoreBySlug).toHaveBeenCalledTimes(1);
+      expect(subscriptions.resolveStorefrontStatus).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps separate cache entries per storefront slug', async () => {
+      storefrontRepository.findStoreBySlug.mockResolvedValue(storeRow);
+      const caching = cachedResolver(60_000);
+
+      await caching.resolve(requestWith({ 'x-storefront-slug': 'my-store' }));
+      await caching.resolve(requestWith({ 'x-storefront-slug': 'other-store' }));
+      await caching.resolve(requestWith({ 'x-storefront-slug': 'my-store' }));
+
+      expect(storefrontRepository.findStoreBySlug).toHaveBeenCalledTimes(2);
+    });
+
+    it('never caches a failed resolution (a store created later must resolve)', async () => {
+      storefrontRepository.findStoreBySlug.mockResolvedValueOnce(null).mockResolvedValueOnce(storeRow);
+      const caching = cachedResolver(60_000);
+
+      await expect(
+        caching.resolve(requestWith({ 'x-storefront-slug': 'brand-new' })),
+      ).rejects.toThrow(NotFoundError);
+      await expect(
+        caching.resolve(requestWith({ 'x-storefront-slug': 'brand-new' })),
+      ).resolves.toMatchObject({ id: 'store-1' });
+
+      expect(storefrontRepository.findStoreBySlug).toHaveBeenCalledTimes(2);
+    });
+
+    it('clearCache drops memoized resolutions', async () => {
+      storefrontRepository.findStoreBySlug.mockResolvedValue(storeRow);
+      const caching = cachedResolver(60_000);
+
+      await caching.resolve(requestWith({ 'x-storefront-slug': 'my-store' }));
+      caching.clearCache();
+      await caching.resolve(requestWith({ 'x-storefront-slug': 'my-store' }));
+
+      expect(storefrontRepository.findStoreBySlug).toHaveBeenCalledTimes(2);
+    });
+  });
 });

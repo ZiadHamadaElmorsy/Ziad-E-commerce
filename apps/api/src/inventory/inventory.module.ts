@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { CatalogModule } from '../catalog/catalog.module';
 import { InventoryController } from './controllers/inventory.controller';
+import { InventoryProductController } from './controllers/inventory-product.controller';
 import { InventoryMovementRepository } from './repositories/inventory-movement.repository';
 import { InventoryReservationRepository } from './repositories/inventory-reservation.repository';
 import { InventoryRepository } from './repositories/inventory.repository';
@@ -25,7 +26,7 @@ import { InventoryService } from './services/inventory.service';
  */
 @Module({
   imports: [CatalogModule],
-  controllers: [InventoryController],
+  controllers: [InventoryController, InventoryProductController],
   providers: [
     InventoryService,
     InventoryReservationService,

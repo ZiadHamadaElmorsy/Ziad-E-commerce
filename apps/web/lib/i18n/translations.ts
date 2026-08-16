@@ -507,6 +507,13 @@ export const en = {
   'media.altTextValue': 'Alt text',
   'media.mimeType': 'MIME type',
   'media.id': 'Asset id',
+  'media.libraryTitle': 'Media library',
+  'media.libraryDesc': 'All uploaded assets, newest first.',
+  'media.libraryEmpty': 'No media assets yet.',
+  'media.libraryEmptyDesc': 'Use the upload form above to add your first asset.',
+  'media.libraryLoading': 'Loading media library…',
+  'media.libraryLoadFailed': 'Failed to load the media library.',
+  'media.date': 'Uploaded',
 
   // --- Inventory -------------------------------------------------------------------
   'inventory.title': 'Inventory',
@@ -1585,6 +1592,13 @@ export const ar: TranslationDict = {
   'media.altTextValue': 'النص البديل',
   'media.mimeType': 'نوع MIME',
   'media.id': 'معرف الملف',
+  'media.libraryTitle': 'مكتبة الوسائط',
+  'media.libraryDesc': 'جميع الملفات المرفوعة، الأحدث أولاً.',
+  'media.libraryEmpty': 'لا توجد ملفات وسائط بعد.',
+  'media.libraryEmptyDesc': 'استخدم نموذج الرفع أعلاه لإضافة أول ملف.',
+  'media.libraryLoading': 'جارٍ تحميل مكتبة الوسائط…',
+  'media.libraryLoadFailed': 'تعذر تحميل مكتبة الوسائط.',
+  'media.date': 'تاريخ الرفع',
 
   // --- Inventory -------------------------------------------------------------------
   'inventory.title': 'المخزون',

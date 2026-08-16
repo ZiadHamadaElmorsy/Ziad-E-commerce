@@ -13,6 +13,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import type { Request, Response } from 'express';
 import { CreateMediaQueryDto } from '../dto/create-media-query.dto';
+import { ListMediaQueryDto } from '../dto/list-media-query.dto';
 import { readRawBody } from '../domain/read-raw-body';
 import { mapUploadTooLargeError, MediaService } from '../services/media.service';
 
@@ -20,6 +21,7 @@ import { mapUploadTooLargeError, MediaService } from '../services/media.service'
  * Media API (docs/API-SPEC.md §29).
  *
  *   POST   /api/v1/media            create a media upload (direct server upload)
+ *   GET    /api/v1/media            list the merchant's media library (paginated)
  *   GET    /api/v1/media/:mediaId   read the media metadata + storage reference
  *   GET    /api/v1/media/:mediaId/content   stream the binary (merchant dashboard)
  *   DELETE /api/v1/media/:mediaId   delete the media (metadata + storage object)
@@ -59,6 +61,13 @@ export class MediaController {
     return Number.isInteger(value) && (value as number) > 0
       ? (value as number)
       : 10 * 1024 * 1024;
+  }
+
+  /** GET /api/v1/media — paginated media library (Phase 25). */
+  @Get()
+  async list(@Query() query: ListMediaQueryDto) {
+    const { items, meta } = await this.media.list(query);
+    return { data: items, meta };
   }
 
   @Get(':mediaId')

@@ -327,6 +327,12 @@ export interface MediaView {
   sizeBytes: number | null;
   altText: string | null;
   storagePath: string;
+  createdAt: string;
+}
+
+export interface ListMediaParams {
+  page?: number;
+  limit?: number;
 }
 
 // --- Inventory ------------------------------------------------------------------
@@ -352,6 +358,49 @@ export interface MovementView {
   onHandAfter: number;
   reservedAfter: number;
   createdAt: string;
+}
+
+// --- Dashboard (Phase 25 — GET /api/v1/dashboard/stats) ---------------------------
+
+export interface DashboardProductCounts {
+  total: number;
+  active: number;
+  drafts: number;
+  archived: number;
+}
+
+export interface DashboardRecentProduct {
+  id: string;
+  name: string;
+  slug: string;
+  status: ProductStatus;
+  /** Price (minor units) of the first ACTIVE variant, or null when none is active. */
+  price: number | null;
+  variantsCount: number;
+}
+
+export interface DashboardOrderSummary {
+  id: string;
+  orderNumber: string;
+  channel: OrderChannel;
+  status: OrderStatus;
+  currency: string;
+  grandTotal: number;
+  customerEmail: string | null;
+  customerPhone: string | null;
+  createdAt: string;
+}
+
+export interface DashboardStatsView {
+  products: DashboardProductCounts;
+  categories: number;
+  orders: {
+    total: number;
+    recent: DashboardOrderSummary[];
+  };
+  /** Sum of grand_total across ALL orders (null when there are no orders). */
+  revenue: number | null;
+  recentProducts: DashboardRecentProduct[];
 }
 
 // --- Subscription ---------------------------------------------------------------

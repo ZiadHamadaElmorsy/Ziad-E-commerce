@@ -39,6 +39,8 @@ import { VariantsService } from './services/variants.service';
   // variant ownership/tenant rules are resolved by ONE implementation.
   // ProductRepository is shared with the Cart module (Phase 6) so product
   // ownership/purchasability is resolved by ONE implementation.
-  exports: [ProductVariantRepository, ProductRepository],
+  // CategoryRepository is shared with the Dashboard module (Phase 25) for the
+  // aggregated stats endpoint.
+  exports: [ProductVariantRepository, ProductRepository, CategoryRepository],
 })
 export class CatalogModule {}

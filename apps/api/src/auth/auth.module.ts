@@ -1,9 +1,13 @@
 import { Global, Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
+import { ConfigService } from '@nestjs/config';
 import { AuthController } from './auth.controller';
 import { AuthGuard } from './auth.guard';
 import { AuthProvider } from './auth-provider';
-import { SupabaseAuthProvider } from './supabase-auth-provider';
+import {
+  DEFAULT_AUTH_VERIFY_CACHE_TTL_MS,
+  SupabaseAuthProvider,
+} from './supabase-auth-provider';
 
 /**
  * Global authentication boundary.
@@ -18,7 +22,15 @@ import { SupabaseAuthProvider } from './supabase-auth-provider';
 @Module({
   controllers: [AuthController],
   providers: [
-    { provide: AuthProvider, useClass: SupabaseAuthProvider },
+    {
+      provide: AuthProvider,
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => {
+        const ttl = config.get<{ authVerifyCacheTtlMs?: number }>('performance')
+          ?.authVerifyCacheTtlMs;
+        return new SupabaseAuthProvider(config, ttl ?? DEFAULT_AUTH_VERIFY_CACHE_TTL_MS);
+      },
+    },
     { provide: APP_GUARD, useClass: AuthGuard },
   ],
   exports: [AuthProvider],

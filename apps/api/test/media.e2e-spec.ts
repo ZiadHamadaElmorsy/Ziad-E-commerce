@@ -444,10 +444,12 @@ describe('Media (e2e)', () => {
         true,
       );
 
-      // No internal tenant columns leak into the response.
+      // No internal tenant columns leak into the response. `createdAt` is part
+      // of the documented public view (Phase 25 — media library ordering), so it
+      // IS expected; `storeId` must never leak.
       const serialized = JSON.stringify(res.body);
       expect(serialized).not.toContain('storeId');
-      expect(serialized).not.toContain('createdAt');
+      expect(serialized).toContain('"createdAt"');
     });
 
     it('rejects unsupported MIME types (strict image allowlist, Phase 21)', async () => {

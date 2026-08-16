@@ -134,29 +134,30 @@ export default function ProductDetailsPage() {
     void load();
   }, [load]);
 
-  // Load real inventory levels for every variant of this product.
+  // Load real inventory levels for EVERY variant of this product with ONE
+  // aggregate request (Phase 25 — previously one authenticated API request per
+  // variant, each paying its own Supabase auth + tenant round-trips).
   useEffect(() => {
     if (!product) return;
     let mounted = true;
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setInventoryLoading(true);
-    const variantIds = product.variants.map((variant) => variant.id);
-    Promise.all(
-      variantIds.map((variantId) =>
-        inventoryApi
-          .getInventory(variantId)
-          .then((result) => ({ variantId, view: result.data }))
-          .catch(() => ({ variantId, view: null as unknown as InventoryView })),
-      ),
-    ).then((results) => {
-      if (!mounted) return;
-      const map: Record<string, InventoryView> = {};
-      for (const result of results) {
-        if (result.view) map[result.variantId] = result.view;
-      }
-      setInventory(map);
-      setInventoryLoading(false);
-    });
+    inventoryApi
+      .listByProduct(product.id)
+      .then((result) => {
+        if (!mounted) return;
+        const map: Record<string, InventoryView> = {};
+        for (const view of result.data) {
+          map[view.variantId] = view;
+        }
+        setInventory(map);
+        setInventoryLoading(false);
+      })
+      .catch(() => {
+        if (!mounted) return;
+        setInventory({});
+        setInventoryLoading(false);
+      });
     return () => {
       mounted = false;
     };
