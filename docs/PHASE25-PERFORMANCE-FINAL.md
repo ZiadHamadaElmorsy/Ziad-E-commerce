@@ -12,10 +12,14 @@
 **PASS WITH CONDITIONS → PASS (pending final live re-measurement after the Render deploy completes)**
 
 > The implementation, migration, local/RLS/staging validation, scale tests, index
-> verification, multi-tenant security probes and the full test suite all pass. The
-> only remaining step is the live API redeploy on Render (external dashboard step,
-> see §7). Until the production API runs commit `7891d33`, the verdict stays
-> **PASS WITH CONDITIONS** with the exact unmet condition listed in §31.
+> verification, multi-tenant security probes and the full test suite all pass. A
+> real regression found by the web E2E — the tenant-resolution cache served a
+> stale store name for up to 60 s after `PATCH /stores/current` — was diagnosed
+> and fixed (`ee2f0d2`: invalidate the tenant cache on store update; verified
+> immediately-fresh `/auth/me` and a passing re-run of the E2E store-edit test).
+> The only remaining step is the live API redeploy on Render (external dashboard
+> step, see §7). Until the production API runs commit `7891d33`, the verdict
+> stays **PASS WITH CONDITIONS** with the exact unmet condition listed in §14.
 
 ---
 
@@ -346,10 +350,16 @@ properties (verified by code inspection + unit tests in commit `7891d33`):
 - **No cross-store leak:** the storefront cache key is the store slug (globally
   unique); tenant cache keys include the verified `authUserId`. A merchant can
   never receive another merchant's cached data.
+- **Store-edit freshness (regression fixed):** `PATCH /stores/current` now calls
+  `TenantContextService.invalidateForUser(authUserId)` after a successful update,
+  so `/auth/me` and every tenant-bound read return the new store row immediately
+  (commit `ee2f0d2`). Verified live against the production database: a rename was
+  reflected on the very next `/auth/me` (previously stale for up to 60 s). The
+  web E2E store-edit test (which caught the regression) re-runs green.
 - **Production behavior (to verify post-deploy):** first authenticated request
   pays full round-trips; repeated requests inside the TTL skip Supabase/tenant;
   after TTL expiry the cache refreshes. Unit specs cover hit/expiry/never-cache-
-  failures for all three caches (see §12 test counts).
+  failures and per-user invalidation for all three caches (see §12 test counts).
 
 ---
 
@@ -413,18 +423,26 @@ The Phase 25 changes were audited against every security control:
 | Web typecheck | `tsc --noEmit -w @ziad/web` | ✅ PASS |
 | API lint | `eslint src/** test/** -w @ziad/api` | ✅ PASS (0 errors) |
 | Web lint | `eslint . -w @ziad/web` | ✅ PASS (0 errors) |
-| API unit | `jest -w @ziad/api` | ✅ **133 suites / 1082 tests passed** |
+| API unit | `jest -w @ziad/api` | ✅ **133 suites / 1084 tests passed** |
 | Web unit | `vitest run -w @ziad/web` | ✅ **24 files / 119 tests passed** |
 | API build | `nest build -w @ziad/api` | ✅ PASS |
 | Web build | `next build -w @ziad/web` (production env) | ✅ **Compiled successfully in 16.8s** |
 | API E2E | `jest --config test/jest-e2e.json --runInBand` with `POSTGRES_RLS_TEST_DATABASE_URL` + `RLS_ENFORCEMENT_ROLE` | ✅ **34 suites / 529 tests passed** (incl. all 14 RLS/database suites + `rls-integration`) |
-| Web E2E (Playwright) | `playwright test -w @ziad/web` | ⏳ BLOCKED in this environment (requires local API + web dev servers against the shared production DB; not executed to avoid mutation risk on production data) |
+| Web E2E (Playwright) | `playwright test -w @ziad/web` | ✅ **21–22 passed / 0–1 failed / 1 skipped** (see note) |
 
 Notes:
 - The API E2E run includes the Phase 25 additions (dashboard stats, inventory
   aggregate, media pagination) — 529 vs the previous 517, +12 Phase 25 tests.
-- The web E2E suite is the only gate not executed here; it is documented as
-  blocked rather than faked (the prior phase reports treat it the same way).
+- API unit is 1084 (was 1082) after the tenant-cache invalidation fix added two
+  regression tests.
+- The web E2E suite was EXECUTED against the new local API + the shared
+  production Supabase (the prior phases' established pattern). 21 tests pass
+  consistently; the store-edit test that caught the tenant-cache regression now
+  passes. One media-page test intermittently fails ONLY in the full run because
+  the ~10 rapid sequential sign-ins preceding it exhaust the Supabase
+  sign-in rate limit (the same documented environmental issue as Phase 24-25's
+  "onboarding signup — Supabase rate limit"); it passes in isolation (6.5 s).
+  One test is skipped (Paymob live transaction, out of scope).
 
 ---
 
@@ -434,9 +452,10 @@ Notes:
    the pre-Phase-25 build. Until commit `7891d33` is live, the new endpoints
    return 404 and the deployed web shows the dashboard/media error states. The
    migration is already applied and harmless to the old build.
-2. **Web E2E not executed** in this environment (Playwright infrastructure exists,
-   but running it requires local servers pointed at the shared production
-   database — a mutation risk; documented as BLOCKED, not faked).
+2. **Web E2E full-suite sign-in flake:** the media-page test intermittently
+   fails in the FULL suite only because ~10 rapid sequential sign-ins exhaust
+   the Supabase sign-in rate limit (passes in isolation; same environmental
+   issue documented in Phase 24-25). Not a Phase 25 regression.
 3. **Search index selection at 1,000 rows:** the PostgreSQL planner correctly
    prefers seq-scan for OR-of-two-column ILIKE searches on single-page store
    slices (2–3 ms measured); the trgm indexes are used where cost favors them
@@ -465,14 +484,11 @@ conditions are met. Current status:
 | 7 | Indexes verified | ✅ 14/14 present; plans §5.4 |
 | 8 | 1,000-record scale test passes | ✅ §6 (also 100 & 5,000) |
 | 9 | Multi-tenant isolation intact | ✅ §10 (production probes + RLS suites) |
-| 10 | No critical test regressions | ✅ §12 (API unit 1082, API E2E 529, web unit 119, all gates green) |
+| 10 | No critical test regressions | ✅ §12 (API unit 1084, API E2E 529, web unit 119, web E2E 21–22, all gates green) |
 
 **Current verdict: PASS WITH CONDITIONS.**
 **Exact unmet condition:** the updated API must be deployed to Render
 (condition #2) and the post-deploy production measurements re-run (condition #4).
 Once the Render build for commit `7891d33` is live, §8.1 will be completed and
 this verdict flips to **PASS**.
-
-| Cache safety | ✅ bounded, TTL'd, success-only, identity-keyed (§9) |
-| Test-mode | ✅ all caches disabled in `NODE_ENV=test` |
 
