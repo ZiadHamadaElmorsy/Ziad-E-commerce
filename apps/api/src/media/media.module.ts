@@ -30,6 +30,8 @@ import { SupabaseStorageProvider } from './storage/supabase-storage-provider';
   // (Phase 19): the storefront commerce service resolves the media row
   // server-side (store-scoped) and then streams the object bytes through the
   // same storage abstraction — no second storage implementation.
-  exports: [StorageProvider],
+  // MediaRepository is exported for the Catalog module's product-image
+  // association flow (store-scoped media ownership verification).
+  exports: [StorageProvider, MediaRepository],
 })
 export class MediaModule {}

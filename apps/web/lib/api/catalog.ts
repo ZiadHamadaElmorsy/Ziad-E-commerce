@@ -41,6 +41,13 @@ export const catalogApi = {
   archiveProduct: (productId: string) =>
     api.post<Envelope<ProductView>>(`/products/${productId}/archive`),
 
+  // --- Product images (product_media association) ---
+  attachMedia: (productId: string, mediaId: string) =>
+    api.post<Envelope<ProductView>>(`/products/${productId}/media/${mediaId}`),
+
+  removeMedia: (productId: string, mediaId: string) =>
+    api.delete<void>(`/products/${productId}/media/${mediaId}`),
+
   // --- Variants ---
   createVariant: (productId: string, input: CreateVariantInput) =>
     api.post<Envelope<VariantView>>(`/products/${productId}/variants`, input),

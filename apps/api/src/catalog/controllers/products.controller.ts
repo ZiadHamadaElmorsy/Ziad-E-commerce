@@ -66,6 +66,19 @@ export class ProductsController {
     return { data: product };
   }
 
+  @Post(':productId/media/:mediaId')
+  @HttpCode(HttpStatus.CREATED)
+  async attachMedia(@Param('productId') productId: string, @Param('mediaId') mediaId: string) {
+    const product = await this.products.attachMedia(productId, mediaId);
+    return { data: product };
+  }
+
+  @Delete(':productId/media/:mediaId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async removeMedia(@Param('productId') productId: string, @Param('mediaId') mediaId: string) {
+    await this.products.removeMedia(productId, mediaId);
+  }
+
   @Post(':productId/publish')
   @HttpCode(HttpStatus.OK)
   async publish(@Param('productId') productId: string) {

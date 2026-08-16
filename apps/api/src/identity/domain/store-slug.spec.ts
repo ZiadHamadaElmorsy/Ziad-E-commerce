@@ -27,7 +27,13 @@ describe('generateStoreSlug (Phase 17 onboarding)', () => {
   it('derives a URL-safe slug from a store name', () => {
     expect(generateStoreSlug('Ziad Boutique')).toBe('ziad-boutique');
     expect(generateStoreSlug('  My Store!! ')).toBe('my-store');
-    expect(generateStoreSlug('قهوة الصباح')).toBe('');
+    expect(generateStoreSlug('قهوة الصباح')).toBe('qhwa-alsbah');
+    expect(generateStoreSlug('عطر رجالي 2026')).toBe('atr-rjaly-2026');
+  });
+
+  it('produces a valid slug for pure-Arabic store names (Arabic onboarding works)', () => {
+    const slug = generateStoreSlug('قهوة الصباح');
+    expect(() => assertValidStoreSlug(slug)).not.toThrow();
   });
 
   it('caps the generated slug at the DNS label limit (63)', () => {

@@ -1,4 +1,5 @@
 import { ValidationError } from '../../common/errors/domain-exceptions';
+import { transliterateArabic } from '../../common/transliteration';
 
 /**
  * Store slug rule (docs/DATABASE.md §7.2 / §10, API-SPEC §15).
@@ -43,14 +44,21 @@ export function assertValidStoreSlug(input: string): void {
 
 /**
  * Derives a Store slug candidate from a store name:
- * "Ziad Boutique" -> "ziad-boutique".
+ * "Ziad Boutique" -> "ziad-boutique",
+ * "قهوة الصباح" -> "qhwa-alsbah".
+ *
+ * Arabic script in the store name is transliterated to Latin first (shared
+ * transliteration helper) so a fully-Arabic store name still produces a valid
+ * public URL slug instead of failing onboarding.
  *
  * The result is a *candidate* only — global uniqueness is enforced by the
  * database (`stores.slug` UNIQUE) and surfaces as a CONFLICT so the caller can
  * let the merchant pick a different name/slug.
  */
 export function generateStoreSlug(name: string): string {
-  return name
+  return transliterateArabic(name)
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
     .trim()
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
@@ -58,3 +66,4 @@ export function generateStoreSlug(name: string): string {
     .slice(0, MAX_STORE_SLUG_LENGTH)
     .replace(/^-+|-+$/g, '');
 }
+

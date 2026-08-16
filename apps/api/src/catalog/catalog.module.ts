@@ -1,9 +1,11 @@
 import { Module } from '@nestjs/common';
+import { MediaModule } from '../media/media.module';
 import { CategoriesController } from './controllers/categories.controller';
 import { ProductsController } from './controllers/products.controller';
 import { VariantsController } from './controllers/variants.controller';
 import { CategoryRepository } from './repositories/category.repository';
 import { ProductCategoryRepository } from './repositories/product-category.repository';
+import { ProductMediaRepository } from './repositories/product-media.repository';
 import { ProductRepository } from './repositories/product.repository';
 import { ProductVariantRepository } from './repositories/product-variant.repository';
 import { CategoriesService } from './services/categories.service';
@@ -21,6 +23,7 @@ import { VariantsService } from './services/variants.service';
  * Business rules live in the service/domain layer; controllers stay thin.
  */
 @Module({
+  imports: [MediaModule],
   controllers: [ProductsController, VariantsController, CategoriesController],
   providers: [
     ProductsService,
@@ -30,6 +33,7 @@ import { VariantsService } from './services/variants.service';
     ProductVariantRepository,
     CategoryRepository,
     ProductCategoryRepository,
+    ProductMediaRepository,
   ],
   // ProductVariantRepository is shared with the Inventory module (Phase 4) so
   // variant ownership/tenant rules are resolved by ONE implementation.

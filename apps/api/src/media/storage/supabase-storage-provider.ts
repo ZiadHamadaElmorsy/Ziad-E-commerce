@@ -60,8 +60,17 @@ export class SupabaseStorageProvider implements StorageProvider {
     }
 
     if (!response.ok) {
-      this.logger.warn(`Supabase Storage upload failed with status ${response.status}.`);
-      throw new StorageError('The media file could not be stored.');
+      // Surface the actual storage failure (status + sanitized reason) in the
+      // server log AND the public message so a production upload failure is
+      // diagnosable instead of a silent generic error. The body never contains
+      // credentials; only the status code + reason text are echoed.
+      const reason = await this.sanitizedReason(response);
+      this.logger.warn(
+        `Supabase Storage upload failed with status ${response.status}${reason ? ` (${reason})` : ''}.`,
+      );
+      throw new StorageError(
+        `The media file could not be stored (storage service returned status ${response.status}${reason ? `: ${reason}` : ''}).`,
+      );
     }
   }
 
@@ -81,7 +90,10 @@ export class SupabaseStorageProvider implements StorageProvider {
     }
 
     if (!response.ok) {
-      this.logger.warn(`Supabase Storage download failed with status ${response.status}.`);
+      const reason = await this.sanitizedReason(response);
+      this.logger.warn(
+        `Supabase Storage download failed with status ${response.status}${reason ? ` (${reason})` : ''}.`,
+      );
       throw new StorageError('The media file could not be retrieved.');
     }
 
@@ -110,8 +122,33 @@ export class SupabaseStorageProvider implements StorageProvider {
       return;
     }
     if (!response.ok) {
-      this.logger.warn(`Supabase Storage delete failed with status ${response.status}.`);
+      const reason = await this.sanitizedReason(response);
+      this.logger.warn(
+        `Supabase Storage delete failed with status ${response.status}${reason ? ` (${reason})` : ''}.`,
+      );
       throw new StorageError('The media object could not be removed from storage.');
+    }
+  }
+
+  /**
+   * Extracts a short, safe reason from a non-2xx storage response body so
+   * failures (e.g. "Bucket not found", "Invalid JWT") are visible in logs and
+   * client errors WITHOUT ever exposing credentials or full request internals.
+   */
+  private async sanitizedReason(response: Response): Promise<string | null> {
+    try {
+      const text = await response.text();
+      const trimmed = text.trim();
+      if (!trimmed) return null;
+      // The body is small and controlled by the storage service. Strip any
+      // quoted token-like segments defensively (defense in depth).
+      const sanitized = trimmed
+        .replace(/Bearer\s+\S+/gi, 'Bearer <redacted>')
+        .replace(/(eyJ[\w-]+\.[\w-]+\.[\w-]+)/g, '<redacted>')
+        .slice(0, 160);
+      return sanitized || null;
+    } catch {
+      return null;
     }
   }
 

@@ -175,6 +175,13 @@ describe('Media (e2e)', () => {
     uploadObject: jest.fn().mockImplementation(async (key: string, data: Buffer) => {
       objects.set(key, Buffer.from(data));
     }),
+    downloadObject: jest.fn().mockImplementation(async (key: string) => {
+      const stored = objects.get(key);
+      if (!stored) {
+        throw new Error('Object not found');
+      }
+      return Buffer.from(stored);
+    }),
     deleteObject: jest.fn().mockImplementation(async (key: string) => {
       objects.delete(key);
     }),
@@ -389,6 +396,7 @@ describe('Media (e2e)', () => {
     it('rejects unauthenticated requests with 401 on every media route', async () => {
       await request(app.getHttpServer()).post('/api/v1/media').send(Buffer.from('x')).expect(401);
       await request(app.getHttpServer()).get('/api/v1/media/media-1').expect(401);
+      await request(app.getHttpServer()).get('/api/v1/media/media-1/content').expect(401);
       await request(app.getHttpServer()).delete('/api/v1/media/media-1').expect(401);
     });
   });
@@ -534,6 +542,23 @@ describe('Media (e2e)', () => {
 
     it('never returns another store media: a cross-tenant id resolves to 404', async () => {
       const res = await authRequest('get', '/media/media-foreign').expect(404);
+      expect(res.body.error.code).toBe('NOT_FOUND');
+    });
+  });
+
+  describe('content (GET /media/:mediaId/content)', () => {
+    it('streams the stored binary with its MIME type to the merchant dashboard', async () => {
+      objects.set('store-1/media-1', Buffer.from('PNG-BYTES'));
+
+      const res = await authRequest('get', '/media/media-1/content').expect(200);
+
+      expect(res.headers['content-type']).toContain('image/png');
+      expect(res.body).toBeInstanceOf(Buffer);
+      expect(res.body.toString()).toBe('PNG-BYTES');
+    });
+
+    it('fails closed with 404 for absent or cross-tenant media ids', async () => {
+      const res = await authRequest('get', '/media/media-foreign/content').expect(404);
       expect(res.body.error.code).toBe('NOT_FOUND');
     });
   });

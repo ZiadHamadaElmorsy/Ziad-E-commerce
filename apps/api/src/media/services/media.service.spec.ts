@@ -28,7 +28,7 @@ describe('MediaService', () => {
     countProductMediaReferences: jest.Mock;
   };
   let transaction: { runWithTenant: jest.Mock };
-  let storage: { uploadObject: jest.Mock; deleteObject: jest.Mock };
+  let storage: { uploadObject: jest.Mock; downloadObject: jest.Mock; deleteObject: jest.Mock };
   let configService: { get: jest.Mock };
   let service: MediaService;
 
@@ -53,6 +53,7 @@ describe('MediaService', () => {
     };
     storage = {
       uploadObject: jest.fn().mockResolvedValue(undefined),
+      downloadObject: jest.fn().mockResolvedValue(Buffer.from('PNGDATA')),
       deleteObject: jest.fn().mockResolvedValue(undefined),
     };
     configService = { get: jest.fn().mockReturnValue(undefined) };
@@ -260,6 +261,33 @@ describe('MediaService', () => {
       media.findByIdInStore.mockResolvedValue(null);
 
       await expect(service.getMedia('media-foreign')).rejects.toBeInstanceOf(NotFoundError);
+    });
+  });
+
+  describe('getMediaContent', () => {
+    it('streams the stored binary through the storage provider for an in-store media id', async () => {
+      media.findByIdInStore.mockResolvedValue(createdRow({ storagePath: 'store-1/media-1' }));
+      storage.downloadObject.mockResolvedValue(Buffer.from('PNGBYTES'));
+
+      const result = await service.getMediaContent('media-1');
+
+      expect(media.findByIdInStore).toHaveBeenCalledWith(storeId, 'media-1');
+      expect(storage.downloadObject).toHaveBeenCalledWith('store-1/media-1');
+      expect(result).toEqual({ buffer: Buffer.from('PNGBYTES'), mimeType: 'image/png' });
+    });
+
+    it('fails closed with NOT_FOUND for absent or cross-tenant media ids (no storage access)', async () => {
+      media.findByIdInStore.mockResolvedValue(null);
+
+      await expect(service.getMediaContent('media-999')).rejects.toBeInstanceOf(NotFoundError);
+      expect(storage.downloadObject).not.toHaveBeenCalled();
+    });
+
+    it('propagates a storage failure as a safe StorageError', async () => {
+      media.findByIdInStore.mockResolvedValue(createdRow());
+      storage.downloadObject.mockRejectedValue(new StorageError('The media file could not be retrieved.'));
+
+      await expect(service.getMediaContent('media-1')).rejects.toBeInstanceOf(StorageError);
     });
   });
 

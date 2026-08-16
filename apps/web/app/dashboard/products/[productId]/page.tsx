@@ -1,11 +1,12 @@
 'use client';
 
-import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { useI18n } from '@/lib/i18n/i18n-context';
 import { catalogApi } from '@/lib/api/catalog';
 import { inventoryApi } from '@/lib/api/inventory';
+import { mediaApi } from '@/lib/api/media';
 import type {
   CategoryView,
   InventoryView,
@@ -13,6 +14,7 @@ import type {
   ProductView,
   VariantView,
 } from '@/lib/api/types';
+import { DashboardMediaImage } from '@/components/dashboard/DashboardMediaImage';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -96,6 +98,15 @@ export default function ProductDetailsPage() {
   const [movements, setMovements] = useState<MovementView[]>([]);
   const [movementsLoading, setMovementsLoading] = useState(false);
 
+  // Product images
+  const [selectedMediaFile, setSelectedMediaFile] = useState<File | null>(null);
+  const [mediaPreviewUrl, setMediaPreviewUrl] = useState<string | null>(null);
+  const [mediaAltText, setMediaAltText] = useState('');
+  const [uploadingMedia, setUploadingMedia] = useState(false);
+  const [mediaError, setMediaError] = useState<string | null>(null);
+  const [removingImageId, setRemovingImageId] = useState<string | null>(null);
+  const previewObjectUrl = useRef<string | null>(null);
+
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -175,6 +186,56 @@ export default function ProductDetailsPage() {
       toast.error(apiErrorMessage(caught, t, 'products.details.updateFailed'));
     } finally {
       setSaving(false);
+    }
+  };
+
+  // --- Product images ---------------------------------------------------------
+
+  const handleMediaFileChange = (file: File | null) => {
+    if (previewObjectUrl.current) {
+      URL.revokeObjectURL(previewObjectUrl.current);
+      previewObjectUrl.current = null;
+    }
+    setSelectedMediaFile(file);
+    setMediaPreviewUrl(null);
+    setMediaError(null);
+    if (file) {
+      previewObjectUrl.current = URL.createObjectURL(file);
+      setMediaPreviewUrl(previewObjectUrl.current);
+    }
+  };
+
+  const handleUploadImage = async () => {
+    if (!product || !selectedMediaFile) return;
+    setUploadingMedia(true);
+    setMediaError(null);
+    try {
+      const uploaded = await mediaApi.upload(selectedMediaFile, mediaAltText.trim() || undefined);
+      const updated = await catalogApi.attachMedia(product.id, uploaded.data.id);
+      setProduct(updated.data);
+      handleMediaFileChange(null);
+      setMediaAltText('');
+      toast.success(t('products.details.imageUploadedToast'));
+    } catch (caught) {
+      setMediaError(apiErrorMessage(caught, t, 'products.details.imageUploadFailed'));
+    } finally {
+      setUploadingMedia(false);
+    }
+  };
+
+  const handleRemoveImage = async (mediaId: string) => {
+    if (!product) return;
+    setRemovingImageId(mediaId);
+    setMediaError(null);
+    try {
+      await catalogApi.removeMedia(product.id, mediaId);
+      const reloaded = await catalogApi.getProduct(product.id);
+      setProduct(reloaded.data);
+      toast.success(t('products.details.imageRemovedToast'));
+    } catch (caught) {
+      toast.error(apiErrorMessage(caught, t, 'products.details.imageRemoveFailed'));
+    } finally {
+      setRemovingImageId(null);
     }
   };
 
@@ -441,6 +502,90 @@ export default function ProductDetailsPage() {
                 </Button>
               </div>
             </form>
+          </Card>
+
+          <Card
+            title={t('products.details.images')}
+            description={t('products.details.imagesDesc')}
+          >
+            {product.images.length === 0 ? (
+              <EmptyState
+                icon="🖼"
+                title={t('products.details.imagesEmpty')}
+                description={t('products.details.imagesEmptyDesc')}
+              />
+            ) : (
+              <div className="product-gallery">
+                {product.images.map((image) => (
+                  <div key={image.id} className="product-gallery__item">
+                    <DashboardMediaImage
+                      mediaId={image.id}
+                      alt={image.altText ?? product.name}
+                      className="product-gallery__thumb"
+                    />
+                    <button
+                      type="button"
+                      className="product-gallery__remove"
+                      aria-label={t('products.details.removeImageAria')}
+                      disabled={removingImageId === image.id}
+                      onClick={() => void handleRemoveImage(image.id)}
+                    >
+                      {removingImageId === image.id ? t('common.saving') : '✕'}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="image-upload">
+              <div className="form-grid">
+                <Field
+                  label={t('products.details.imageFile')}
+                  htmlFor="product-image-file"
+                  hint={t('media.altTextHint')}
+                >
+                  <Input
+                    id="product-image-file"
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp,image/gif,image/avif"
+                    onChange={(event) => handleMediaFileChange(event.target.files?.[0] ?? null)}
+                  />
+                </Field>
+                <Field label={t('media.altText')} htmlFor="product-image-alt">
+                  <Input
+                    id="product-image-alt"
+                    value={mediaAltText}
+                    onChange={(event) => setMediaAltText(event.target.value)}
+                  />
+                </Field>
+              </div>
+
+              {mediaPreviewUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element -- local file preview before upload
+                <img
+                  src={mediaPreviewUrl}
+                  alt={t('products.details.imagePreviewAlt')}
+                  className="image-upload__preview"
+                />
+              ) : null}
+
+              {mediaError ? (
+                <p className="alert alert--error" role="alert">
+                  {mediaError}
+                </p>
+              ) : null}
+
+              <div className="form-actions">
+                <Button
+                  type="button"
+                  onClick={() => void handleUploadImage()}
+                  disabled={!selectedMediaFile || !product}
+                  loading={uploadingMedia}
+                >
+                  {uploadingMedia ? t('media.uploading') : t('products.details.uploadImage')}
+                </Button>
+              </div>
+            </div>
           </Card>
 
           <Card

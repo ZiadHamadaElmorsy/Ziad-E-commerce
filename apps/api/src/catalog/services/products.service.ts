@@ -7,6 +7,7 @@ import {
   ValidationError,
 } from '../../common/errors/domain-exceptions';
 import { TransactionService } from '../../infrastructure/database/transaction.service';
+import { MediaRepository } from '../../media/repositories/media.repository';
 import { buildPaginationMeta, PaginatedView, ProductView, toProductView } from '../catalog.types';
 import { mapCatalogWriteError } from '../domain/catalog-error.mapper';
 import { assertValidCatalogSlug, slugify } from '../domain/catalog-slug';
@@ -19,13 +20,16 @@ import { requireStoreId } from '../domain/catalog-tenant';
 import { CreateProductDto } from '../dto/create-product.dto';
 import { ListProductsQueryDto } from '../dto/list-products-query.dto';
 import { UpdateProductDto } from '../dto/update-product.dto';
+import { ProductMediaRepository } from '../repositories/product-media.repository';
 import { ProductRepository } from '../repositories/product.repository';
 import { ProductVariantRepository } from '../repositories/product-variant.repository';
 
 /** P2002 conflict messages keyed by the unique-index target (see mapper). */
 const PRODUCT_UNIQUE_MESSAGES = {
   'store_id,slug': 'A product with this slug already exists in this store.',
+  'product_id,media_id': 'This image is already attached to the product.',
 };
+
 
 /**
  * Catalog Product application service.
@@ -43,6 +47,11 @@ const PRODUCT_UNIQUE_MESSAGES = {
  *   guarded conditional UPDATEs (docs/DATABASE.md §26.2).
  * - Store-scoped slug uniqueness with automatic `-2`, `-3`, ... collision
  *   resolution.
+ * - Product images are the ordered `product_media` associations: attaching is
+ *   store-scoped (product AND media must belong to the same store), appends at
+ *   the end of the gallery and is idempotent-safe (a duplicate association is
+ *   a CONFLICT, not a corruption). Removing an association never touches the
+ *   media binary/metadata row.
  * - Physical deletion is NOT exposed (docs/API-SPEC.md defines no DELETE
  *   endpoint); the retention rules of docs/DATABASE.md §25.1 are honored by
  *   archiving.
@@ -54,6 +63,8 @@ export class ProductsService {
     private readonly products: ProductRepository,
     private readonly variants: ProductVariantRepository,
     private readonly transaction: TransactionService,
+    private readonly productMedia: ProductMediaRepository,
+    private readonly media: MediaRepository,
   ) {}
 
   /**
@@ -93,7 +104,7 @@ export class ProductsService {
         return { product: created, variant: defaultVariant };
       });
 
-      return toProductView(product, [variant]);
+      return toProductView(product, [variant], []);
     } catch (error) {
       throw mapCatalogWriteError(error, PRODUCT_UNIQUE_MESSAGES);
     }
@@ -118,7 +129,7 @@ export class ProductsService {
     ]);
 
     return {
-      items: items.map((product) => toProductView(product, product.variants)),
+      items: items.map((product) => toProductView(product, product.variants, product.productMedia)),
       meta: buildPaginationMeta(query.page, query.limit, total),
     };
   }
@@ -129,7 +140,7 @@ export class ProductsService {
     if (!product) {
       throw new NotFoundError('The product was not found.');
     }
-    return toProductView(product, product.variants);
+    return toProductView(product, product.variants, product.productMedia);
   }
 
   async update(productId: string, dto: UpdateProductDto): Promise<ProductView> {
@@ -149,7 +160,72 @@ export class ProductsService {
     if (!updated) {
       throw new NotFoundError('The product was not found.');
     }
-    return toProductView(updated, updated.variants);
+    return toProductView(updated, updated.variants, updated.productMedia);
+  }
+
+  /**
+   * POST /products/:productId/media/:mediaId — attaches an existing media asset
+   * as a product image.
+   *
+   * Store-scoped on BOTH sides: the product and the media must belong to the
+   * store resolved from the tenant context (never client input). The image is
+   * appended at the end of the product's ordered gallery. A duplicate
+   * association is rejected with CONFLICT (UNIQUE product_id, media_id).
+   */
+  async attachMedia(productId: string, mediaId: string): Promise<ProductView> {
+    const storeId = requireStoreId(this.requestContext);
+
+    const product = await this.products.findById(storeId, productId);
+    if (!product) {
+      throw new NotFoundError('The product was not found.');
+    }
+
+    const mediaRow = await this.media.findByIdInStore(storeId, mediaId);
+    if (!mediaRow) {
+      throw new NotFoundError('The media asset was not found.');
+    }
+
+    try {
+      await this.transaction.runWithTenant(storeId, async (tx) => {
+        const nextOrder = (await this.productMedia.maxSortOrder(tx, storeId, productId)) + 1;
+        await this.productMedia.create(tx, {
+          storeId,
+          productId,
+          mediaId,
+          sortOrder: nextOrder,
+        });
+      });
+    } catch (error) {
+      throw mapCatalogWriteError(error, PRODUCT_UNIQUE_MESSAGES);
+    }
+
+    const updated = await this.products.findById(storeId, productId, true);
+    if (!updated) {
+      throw new NotFoundError('The product was not found.');
+    }
+    return toProductView(updated, updated.variants, updated.productMedia);
+  }
+
+  /**
+   * DELETE /products/:productId/media/:mediaId — removes a product image
+   * association. Store-scoped on both sides; absent/cross-tenant associations
+   * fail closed with NOT_FOUND. The media metadata row and its storage object
+   * are NOT touched here (media deletion remains a separate Media API concern).
+   */
+  async removeMedia(productId: string, mediaId: string): Promise<void> {
+    const storeId = requireStoreId(this.requestContext);
+
+    const product = await this.products.findById(storeId, productId);
+    if (!product) {
+      throw new NotFoundError('The product was not found.');
+    }
+
+    const result = await this.transaction.runWithTenant(storeId, (tx) =>
+      this.productMedia.deleteLink(tx, storeId, productId, mediaId),
+    );
+    if (result.count === 0) {
+      throw new NotFoundError('The product image association was not found.');
+    }
   }
 
   async publish(productId: string): Promise<ProductView> {
@@ -212,7 +288,7 @@ export class ProductsService {
     if (!updated) {
       throw new NotFoundError('The product was not found.');
     }
-    return toProductView(updated, updated.variants);
+    return toProductView(updated, updated.variants, updated.productMedia);
   }
 
   private async resolveUniqueSlug(

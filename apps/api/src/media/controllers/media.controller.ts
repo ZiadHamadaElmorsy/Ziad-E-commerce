@@ -8,9 +8,10 @@ import {
   Post,
   Query,
   Req,
+  Res,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import type { Request } from 'express';
+import type { Request, Response } from 'express';
 import { CreateMediaQueryDto } from '../dto/create-media-query.dto';
 import { readRawBody } from '../domain/read-raw-body';
 import { mapUploadTooLargeError, MediaService } from '../services/media.service';
@@ -20,6 +21,7 @@ import { mapUploadTooLargeError, MediaService } from '../services/media.service'
  *
  *   POST   /api/v1/media            create a media upload (direct server upload)
  *   GET    /api/v1/media/:mediaId   read the media metadata + storage reference
+ *   GET    /api/v1/media/:mediaId/content   stream the binary (merchant dashboard)
  *   DELETE /api/v1/media/:mediaId   delete the media (metadata + storage object)
  *
  * Thin controller; every route is authenticated + tenant-scoped via the global
@@ -63,6 +65,16 @@ export class MediaController {
   async get(@Param('mediaId') mediaId: string) {
     const media = await this.media.getMedia(mediaId);
     return { data: media };
+  }
+
+  @Get(':mediaId/content')
+  async getContent(@Param('mediaId') mediaId: string, @Res() response: Response): Promise<void> {
+    const { buffer, mimeType } = await this.media.getMediaContent(mediaId);
+    if (mimeType) {
+      response.type(mimeType);
+    }
+    response.setHeader('Cache-Control', 'private, max-age=3600');
+    response.send(buffer);
   }
 
   @Delete(':mediaId')

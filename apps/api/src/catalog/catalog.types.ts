@@ -27,6 +27,12 @@ export interface VariantView {
   status: VariantStatus;
 }
 
+/** A product image reference (media id + alt text; no storage internals). */
+export interface ProductImage {
+  id: string;
+  altText: string | null;
+}
+
 export interface ProductView {
   id: string;
   name: string;
@@ -34,6 +40,8 @@ export interface ProductView {
   description: string | null;
   status: ProductStatus;
   variants: VariantView[];
+  /** Product images ordered by sort_order (media ids resolvable via /media/:id). */
+  images: ProductImage[];
 }
 
 export interface CategoryView {
@@ -74,7 +82,18 @@ export function toVariantView(variant: ProductVariant): VariantView {
   };
 }
 
-export function toProductView(product: Product, variants: ProductVariant[]): ProductView {
+/** Maps the product_media relation rows to the public image reference list. */
+export function toProductImages(
+  productMedia: Array<{ media: { id: string; altText: string | null } }> | undefined,
+): ProductImage[] {
+  return (productMedia ?? []).map((pm) => ({ id: pm.media.id, altText: pm.media.altText }));
+}
+
+export function toProductView(
+  product: Product,
+  variants: ProductVariant[],
+  productMedia?: Array<{ media: { id: string; altText: string | null } }>,
+): ProductView {
   return {
     id: product.id,
     name: product.name,
@@ -82,6 +101,7 @@ export function toProductView(product: Product, variants: ProductVariant[]): Pro
     description: product.description,
     status: product.status,
     variants: variants.map(toVariantView),
+    images: toProductImages(productMedia),
   };
 }
 

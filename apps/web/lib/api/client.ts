@@ -41,6 +41,7 @@ async function getAccessToken(): Promise<string | null> {
   const { data } = await supabase.auth.getSession();
   return data.session?.access_token ?? null;
 }
+export { getAccessToken };
 
 async function refreshAccessToken(): Promise<string | null> {
   const supabase = getSupabaseBrowserClient();

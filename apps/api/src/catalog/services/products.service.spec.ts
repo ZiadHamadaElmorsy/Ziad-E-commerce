@@ -8,9 +8,11 @@ import {
   ValidationError,
 } from '../../common/errors/domain-exceptions';
 import { TransactionService } from '../../infrastructure/database/transaction.service';
+import { MediaRepository } from '../../media/repositories/media.repository';
 import { CreateProductDto } from '../dto/create-product.dto';
 import { ListProductsQueryDto } from '../dto/list-products-query.dto';
 import { UpdateProductDto } from '../dto/update-product.dto';
+import { ProductMediaRepository } from '../repositories/product-media.repository';
 import { ProductRepository } from '../repositories/product.repository';
 import { ProductVariantRepository } from '../repositories/product-variant.repository';
 import { ProductsService } from './products.service';
@@ -31,6 +33,13 @@ describe('ProductsService', () => {
     findByProductId: jest.Mock;
     countByProductId: jest.Mock;
   };
+  let productMedia: {
+    create: jest.Mock;
+    deleteLink: jest.Mock;
+    maxSortOrder: jest.Mock;
+    findImagesByProduct: jest.Mock;
+  };
+  let media: { findByIdInStore: jest.Mock };
   let transaction: { run: jest.Mock; runWithTenant: jest.Mock };
   let service: ProductsService;
 
@@ -71,6 +80,13 @@ describe('ProductsService', () => {
       count: jest.fn(),
     };
     variants = { create: jest.fn(), findByProductId: jest.fn(), countByProductId: jest.fn() };
+    productMedia = {
+      create: jest.fn(),
+      deleteLink: jest.fn(),
+      maxSortOrder: jest.fn(),
+      findImagesByProduct: jest.fn(),
+    };
+    media = { findByIdInStore: jest.fn() };
     transaction = { run: jest.fn(), runWithTenant: jest.fn() };
 
     transaction.runWithTenant.mockImplementation(
@@ -82,6 +98,8 @@ describe('ProductsService', () => {
       products as unknown as ProductRepository,
       variants as unknown as ProductVariantRepository,
       transaction as unknown as TransactionService,
+      productMedia as unknown as ProductMediaRepository,
+      media as unknown as MediaRepository,
     );
   });
 
@@ -305,6 +323,121 @@ describe('ProductsService', () => {
       await expect(service.update('product-999', updateDto())).rejects.toBeInstanceOf(
         NotFoundError,
       );
+    });
+  });
+
+  describe('attachMedia', () => {
+    const mediaRow = {
+      id: 'media-1',
+      storeId: 'store-1',
+      storagePath: 'store-1/media-1',
+      mediaType: 'IMAGE',
+      mimeType: 'image/png',
+      sizeBytes: 100n,
+      altText: null,
+      createdAt: new Date('2026-08-12T00:00:00Z'),
+    };
+
+    it('appends the image at the end of the product gallery inside a tenant-bound transaction', async () => {
+      withTenant();
+      products.findById.mockResolvedValue(productRow);
+      media.findByIdInStore.mockResolvedValue(mediaRow);
+      productMedia.maxSortOrder.mockResolvedValue(1);
+      productMedia.create.mockResolvedValue({ id: 'link-1' });
+      products.findById.mockResolvedValueOnce(productRow); // existence check
+      products.findById.mockResolvedValueOnce({
+        ...productRow,
+        variants: [variantRow],
+        productMedia: [{ media: { id: 'media-1', altText: null } }],
+      });
+
+      const result = await service.attachMedia('product-1', 'media-1');
+
+      expect(transaction.runWithTenant).toHaveBeenCalledWith('store-1', expect.any(Function));
+      expect(productMedia.maxSortOrder).toHaveBeenCalledWith(expect.anything(), 'store-1', 'product-1');
+      expect(productMedia.create).toHaveBeenCalledWith(expect.anything(), {
+        storeId: 'store-1',
+        productId: 'product-1',
+        mediaId: 'media-1',
+        sortOrder: 2,
+      });
+      expect(result.images).toEqual([{ id: 'media-1', altText: null }]);
+    });
+
+    it('fails with NOT_FOUND when the product is not in the current store', async () => {
+      withTenant();
+      products.findById.mockResolvedValue(null);
+
+      await expect(service.attachMedia('product-999', 'media-1')).rejects.toBeInstanceOf(
+        NotFoundError,
+      );
+      expect(productMedia.create).not.toHaveBeenCalled();
+    });
+
+    it('fails with NOT_FOUND when the media belongs to another store (store-scoped on both sides)', async () => {
+      withTenant();
+      products.findById.mockResolvedValue(productRow);
+      media.findByIdInStore.mockResolvedValue(null);
+
+      await expect(service.attachMedia('product-1', 'media-999')).rejects.toBeInstanceOf(
+        NotFoundError,
+      );
+      expect(productMedia.create).not.toHaveBeenCalled();
+    });
+
+    it('maps a duplicate association (P2002 product_id,media_id) to CONFLICT', async () => {
+      withTenant();
+      products.findById.mockResolvedValue(productRow);
+      media.findByIdInStore.mockResolvedValue(mediaRow);
+      productMedia.maxSortOrder.mockResolvedValue(0);
+      productMedia.create.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+          code: 'P2002',
+          clientVersion: '6.19.3',
+          meta: { target: ['product_id', 'media_id'] },
+        }),
+      );
+
+      await expect(service.attachMedia('product-1', 'media-1')).rejects.toBeInstanceOf(
+        ConflictError,
+      );
+    });
+  });
+
+  describe('removeMedia', () => {
+    it('removes the product image association (store-scoped) without touching the media row', async () => {
+      withTenant();
+      products.findById.mockResolvedValue(productRow);
+      productMedia.deleteLink.mockResolvedValue({ count: 1 });
+
+      await expect(service.removeMedia('product-1', 'media-1')).resolves.toBeUndefined();
+
+      expect(productMedia.deleteLink).toHaveBeenCalledWith(
+        expect.anything(),
+        'store-1',
+        'product-1',
+        'media-1',
+      );
+    });
+
+    it('fails with NOT_FOUND when the association is absent or cross-tenant', async () => {
+      withTenant();
+      products.findById.mockResolvedValue(productRow);
+      productMedia.deleteLink.mockResolvedValue({ count: 0 });
+
+      await expect(service.removeMedia('product-1', 'media-999')).rejects.toBeInstanceOf(
+        NotFoundError,
+      );
+    });
+
+    it('fails with NOT_FOUND when the product is not in the current store', async () => {
+      withTenant();
+      products.findById.mockResolvedValue(null);
+
+      await expect(service.removeMedia('product-999', 'media-1')).rejects.toBeInstanceOf(
+        NotFoundError,
+      );
+      expect(productMedia.deleteLink).not.toHaveBeenCalled();
     });
   });
 

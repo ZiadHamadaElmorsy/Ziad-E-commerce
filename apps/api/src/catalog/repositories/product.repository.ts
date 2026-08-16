@@ -1,9 +1,17 @@
 import { Injectable } from '@nestjs/common';
-import { Prisma, Product, ProductStatus, ProductVariant } from '@prisma/client';
+import { Media, Prisma, Product, ProductStatus, ProductVariant } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 
-/** A Product row with its variants loaded (used for single-product views). */
-export type ProductWithVariants = Product & { variants: ProductVariant[] };
+/** A product_media row with its media metadata (product images). */
+export type ProductMediaWithMedia = {
+  media: Pick<Media, 'id' | 'altText'>;
+};
+
+/** A Product row with its variants + ordered images loaded (used for views). */
+export type ProductWithVariants = Product & {
+  variants: ProductVariant[];
+  productMedia?: Array<{ media: { id: string; altText: string | null } }>;
+};
 
 /** Minimal write input for creating a Product (docs/DATABASE.md §7.5). */
 export interface CreateProductInput {
@@ -103,12 +111,10 @@ export class ProductRepository {
     storeId: string,
     productId: string,
     includeVariants = false,
-  ): Promise<(Product & { variants?: ProductVariant[] }) | null> {
+  ): Promise<(Product & { variants?: ProductVariant[]; productMedia?: unknown }) | null> {
     return this.prisma.product.findUnique({
       where: { storeId_id: { storeId, id: productId } },
-      ...(includeVariants
-        ? { include: { variants: { orderBy: { createdAt: 'asc' as const } } } }
-        : {}),
+      ...(includeVariants ? { include: this.productInclude() } : {}),
     });
   }
 
@@ -118,12 +124,23 @@ export class ProductRepository {
       skip: filter.skip,
       take: filter.take,
       orderBy: filter.orderBy,
-      include: { variants: { orderBy: { createdAt: 'asc' as const } } },
+      include: this.productInclude(),
     });
   }
 
   async count(storeId: string, filter: ProductListFilter): Promise<number> {
     return this.prisma.product.count({ where: this.buildWhere(storeId, filter) });
+  }
+
+  /** Variants (ascending) + ordered product images used by every product view. */
+  private productInclude() {
+    return {
+      variants: { orderBy: { createdAt: 'asc' as const } },
+      productMedia: {
+        include: { media: true },
+        orderBy: { sortOrder: 'asc' as const },
+      },
+    };
   }
 
   private buildWhere(storeId: string, filter: ProductListFilter): Prisma.ProductWhereInput {

@@ -110,6 +110,9 @@ describe('Catalog (e2e)', () => {
   const txCategoryFindFirst = jest.fn();
   const txProductCategoryCreate = jest.fn();
   const txProductCategoryDeleteMany = jest.fn();
+  const txProductMediaCreate = jest.fn();
+  const txProductMediaDeleteMany = jest.fn();
+  const txProductMediaAggregate = jest.fn();
 
   const txClient = {
     product: {
@@ -134,6 +137,11 @@ describe('Catalog (e2e)', () => {
       create: txProductCategoryCreate,
       deleteMany: txProductCategoryDeleteMany,
     },
+    productMedia: {
+      create: txProductMediaCreate,
+      deleteMany: txProductMediaDeleteMany,
+      aggregate: txProductMediaAggregate,
+    },
     $executeRaw: jest.fn().mockResolvedValue(undefined),
   };
 
@@ -149,6 +157,7 @@ describe('Catalog (e2e)', () => {
       ),
     storeMembership: { findMany: jest.fn() },
     subscription: { findUnique: jest.fn() },
+    media: { findFirst: jest.fn() },
     product: {
       findUnique: jest.fn(),
       findMany: jest.fn(),
@@ -236,6 +245,10 @@ describe('Catalog (e2e)', () => {
     txCategoryFindFirst.mockReset();
     txProductCategoryCreate.mockReset();
     txProductCategoryDeleteMany.mockReset();
+    txProductMediaCreate.mockReset();
+    txProductMediaDeleteMany.mockReset();
+    txProductMediaAggregate.mockReset();
+    prismaServiceStub.media.findFirst.mockReset();
   });
 
   afterAll(async () => {
@@ -278,6 +291,33 @@ describe('Catalog (e2e)', () => {
       });
       expect(txVariantCreate).toHaveBeenCalledWith({
         data: expect.objectContaining({ storeId: 'store-1', productId: 'product-1' }),
+      });
+    });
+
+    it.each([
+      ['تي شيرت رجالي', 'ty-shyrt-rjaly'],
+      ['قميص أبيض', 'qmys-abyd'],
+      ['عطر رجالي 2026', 'atr-rjaly-2026'],
+      ['تي شيرت Nike', 'ty-shyrt-nike'],
+      ["Men's Classic T-Shirt", 'men-s-classic-t-shirt'],
+    ])('creates a product for the multilingual name %j with a valid store-scoped slug (%s)', async (name, expectedSlug) => {
+      txProductFindFirst.mockResolvedValue(null);
+      txProductCreate.mockResolvedValue({ ...productRow, name, slug: expectedSlug });
+      txVariantCreate.mockResolvedValue(variantRow);
+
+      const res = await request(app.getHttpServer())
+        .post('/api/v1/products')
+        .set('Authorization', 'Bearer valid-token')
+        .send({ name })
+        .expect(201);
+
+      expect(res.body.data.slug).toBe(expectedSlug);
+      expect(res.body.data.name).toBe(name);
+      expect(res.body.data.status).toBe('DRAFT');
+      // The stored name is the human-facing multilingual value, never the slug.
+      expect(/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(res.body.data.slug)).toBe(true);
+      expect(txProductCreate).toHaveBeenCalledWith({
+        data: expect.objectContaining({ storeId: 'store-1', slug: expectedSlug, name }),
       });
     });
 
@@ -426,6 +466,116 @@ describe('Catalog (e2e)', () => {
         .expect(400);
 
       expect(res.body.error.code).toBe('VALIDATION_ERROR');
+    });
+  });
+
+  describe('product images (product_media association)', () => {
+    const mediaRow = {
+      id: 'media-1',
+      storeId: 'store-1',
+      storagePath: 'store-1/media-1',
+      mediaType: 'IMAGE',
+      mimeType: 'image/png',
+      sizeBytes: 100n,
+      altText: null,
+      createdAt: new Date('2026-08-12T00:00:00Z'),
+    };
+
+    it('attaches an existing in-store media asset to a product (201) and returns the updated product with images', async () => {
+      prismaServiceStub.product.findUnique.mockImplementation((args: { include?: unknown }) => {
+        if (args.include) {
+          return Promise.resolve({
+            ...productRow,
+            variants: [variantRow],
+            productMedia: [{ media: { id: 'media-1', altText: null } }],
+          });
+        }
+        return Promise.resolve(productRow);
+      });
+      prismaServiceStub.media.findFirst.mockResolvedValue(mediaRow);
+      txProductMediaAggregate.mockResolvedValue({ _max: { sortOrder: 0 } });
+      txProductMediaCreate.mockResolvedValue({
+        id: 'pm-new',
+        storeId: 'store-1',
+        productId: 'product-1',
+        mediaId: 'media-1',
+        sortOrder: 1,
+      });
+
+      const res = await request(app.getHttpServer())
+        .post('/api/v1/products/product-1/media/media-1')
+        .set('Authorization', 'Bearer valid-token')
+        .expect(201);
+
+      expect(txProductMediaCreate).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          storeId: 'store-1',
+          productId: 'product-1',
+          mediaId: 'media-1',
+          sortOrder: 1,
+        }),
+      });
+      expect(res.body.data.images).toEqual([{ id: 'media-1', altText: null }]);
+    });
+
+    it('fails with 404 when the media belongs to another store (store-scoped on both sides)', async () => {
+      prismaServiceStub.product.findUnique.mockResolvedValue(productRow);
+      prismaServiceStub.media.findFirst.mockResolvedValue(null);
+
+      const res = await request(app.getHttpServer())
+        .post('/api/v1/products/product-1/media/media-foreign')
+        .set('Authorization', 'Bearer valid-token')
+        .expect(404);
+
+      expect(res.body.error.code).toBe('NOT_FOUND');
+      expect(txProductMediaCreate).not.toHaveBeenCalled();
+    });
+
+    it('maps a duplicate association (UNIQUE product_id,media_id) to 409 CONFLICT', async () => {
+      prismaServiceStub.product.findUnique.mockResolvedValue(productRow);
+      prismaServiceStub.media.findFirst.mockResolvedValue(mediaRow);
+      txProductMediaAggregate.mockResolvedValue({ _max: { sortOrder: 0 } });
+      txProductMediaCreate.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+          code: 'P2002',
+          clientVersion: '6.19.3',
+          meta: { target: ['product_id', 'media_id'] },
+        }),
+      );
+
+      const res = await request(app.getHttpServer())
+        .post('/api/v1/products/product-1/media/media-1')
+        .set('Authorization', 'Bearer valid-token')
+        .expect(409);
+
+      expect(res.body.error.code).toBe('CONFLICT');
+    });
+
+    it('removes a product image association (204)', async () => {
+      prismaServiceStub.product.findUnique.mockResolvedValue(productRow);
+      txProductMediaDeleteMany.mockResolvedValue({ count: 1 });
+
+      const res = await request(app.getHttpServer())
+        .delete('/api/v1/products/product-1/media/media-1')
+        .set('Authorization', 'Bearer valid-token')
+        .expect(204);
+
+      expect(txProductMediaDeleteMany).toHaveBeenCalledWith({
+        where: { storeId: 'store-1', productId: 'product-1', mediaId: 'media-1' },
+      });
+      expect(res.body).toEqual({});
+    });
+
+    it('fails with 404 when the association is absent or cross-tenant', async () => {
+      prismaServiceStub.product.findUnique.mockResolvedValue(productRow);
+      txProductMediaDeleteMany.mockResolvedValue({ count: 0 });
+
+      const res = await request(app.getHttpServer())
+        .delete('/api/v1/products/product-1/media/media-999')
+        .set('Authorization', 'Bearer valid-token')
+        .expect(404);
+
+      expect(res.body.error.code).toBe('NOT_FOUND');
     });
   });
 

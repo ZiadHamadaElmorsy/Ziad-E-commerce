@@ -115,6 +115,12 @@ export interface VariantView {
   status: VariantStatus;
 }
 
+/** A product image reference (media id + alt text; media resolvable via /media/:id). */
+export interface ProductImage {
+  id: string;
+  altText: string | null;
+}
+
 export interface ProductView {
   id: string;
   name: string;
@@ -122,6 +128,8 @@ export interface ProductView {
   description: string | null;
   status: ProductStatus;
   variants: VariantView[];
+  /** Product images ordered by sort_order (empty when none are attached yet). */
+  images: ProductImage[];
 }
 
 export interface CategoryView {

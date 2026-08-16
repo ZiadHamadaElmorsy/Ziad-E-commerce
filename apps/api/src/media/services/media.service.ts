@@ -117,6 +117,25 @@ export class MediaService {
     return toMediaView(media);
   }
 
+  /**
+   * GET /api/v1/media/:mediaId/content — streams the media binary to the
+   * MERCHANT dashboard. The metadata row is resolved store-scoped first (a
+   * cross-tenant id fails closed with NOT_FOUND), then the bytes are streamed
+   * through the same StorageProvider used by the public storefront proxy —
+   * no second storage path, no signed URLs, no public bucket.
+   */
+  async getMediaContent(mediaId: string): Promise<{ buffer: Buffer; mimeType: string | null }> {
+    const storeId = requireStoreId(this.requestContext);
+
+    const media = await this.media.findByIdInStore(storeId, mediaId);
+    if (!media) {
+      throw new NotFoundError('The media asset was not found.');
+    }
+
+    const buffer = await this.storage.downloadObject(media.storagePath);
+    return { buffer, mimeType: media.mimeType };
+  }
+
   /** DELETE /api/v1/media/:mediaId — physical delete (metadata + storage object). */
   async deleteMedia(mediaId: string): Promise<void> {
     const storeId = requireStoreId(this.requestContext);

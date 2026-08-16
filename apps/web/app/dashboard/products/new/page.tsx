@@ -8,7 +8,8 @@ import { catalogApi } from '@/lib/api/catalog';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
-import { Field, Input, Textarea, Select } from '@/components/ui/FormControls';
+import { Field, Input, Textarea } from '@/components/ui/FormControls';
+import { StatusBadge } from '@/components/ui/Badge';
 import { useToast } from '@/components/ui/Toast';
 import { apiErrorMessage } from '@/lib/i18n/api-error';
 
@@ -19,7 +20,6 @@ export default function NewProductPage() {
 
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
-  const [status, setStatus] = useState('DRAFT');
   const [nameError, setNameError] = useState<string | undefined>();
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -39,7 +39,7 @@ export default function NewProductPage() {
       const result = await catalogApi.createProduct({
         name: name.trim(),
         description: description.trim() || undefined,
-        status: status === 'DRAFT' ? 'DRAFT' : undefined,
+        status: 'DRAFT',
       });
       toast.success(t('products.new.createdToast'));
       router.replace(`/dashboard/products/${result.data.id}`);
@@ -98,19 +98,10 @@ export default function NewProductPage() {
             </Field>
 
             <Field label={t('common.status')} htmlFor="status" hint={t('products.new.statusHint')}>
-              <Select
-                id="status"
-                value={status}
-                onChange={(event) => setStatus(event.target.value)}
-              >
-                <option value="DRAFT">{t('status.DRAFT')}</option>
-                <option value="ACTIVE" disabled>
-                  {t('products.new.statusActiveDisabled')}
-                </option>
-                <option value="ARCHIVED" disabled>
-                  {t('products.new.statusArchivedDisabled')}
-                </option>
-              </Select>
+              <div className="form-status-control">
+                <StatusBadge status="DRAFT" />
+                <p className="card__muted">{t('products.new.statusNote')}</p>
+              </div>
             </Field>
           </div>
         </Card>
