@@ -293,8 +293,10 @@ the observation window (new endpoints stayed 404 for >15 minutes). The service
 `ziad-e-commerce-api` is configured entirely in the Render dashboard (no
 `render.yaml`, no Dockerfile, no deploy-hook URL, no `RENDER_API_KEY` in this
 environment) — the deploy is triggered from the Render dashboard
-(**Manual Deploy → Deploy latest commit**). Status: **TRIGGERED MANUALLY — build
-in progress**. This is the sole remaining external step.
+(**Manual Deploy → Deploy latest commit**). At the time this report was finalized
+the deployment had **not yet landed** (the live API still returns 404 for the new
+endpoints). This is the sole remaining external step; once it completes, §8.1
+(and the §14 verdict) can be finalized without further code changes.
 
 ### 7.4 Production health checks
 
@@ -323,7 +325,24 @@ once the Render deploy completes (§7.3) and are recorded in §8.1 as they land.
 
 ### 8.1 Post-deploy measurements (live)
 
-_Filled once the Render deploy lands._
+The Render deploy has not landed yet; the "After" numbers below were measured
+against the **exact same build** (`7891d33` + `ee2f0d2`) running locally against
+the production Supabase database (the same env the Render deploy will use). Once
+the Render deploy completes, these are re-measured against
+`https://ziad-e-commerce-api.onrender.com`.
+
+| Probe (new build, production DB) | Result |
+| --- | --- |
+| `GET /api/v1/auth/me` (auth cache hit, repeated) | **20 ms** vs 1243–2092 ms before |
+| `GET /api/v1/products?page=1&limit=5` (tenant cache hit) | **414–462 ms** vs 3056 ms before (remaining time = Supabase DB network round-trip) |
+| `GET /api/v1/storefront` (storefront cache) | **397–444 ms warm** vs 2030–2285 ms before; 1245 ms cold |
+| `GET /api/v1/dashboard/stats` (cold first call) | 2519 ms (includes Prisma connect + cache warm-up); payload 151 B for an empty store |
+| `GET /api/v1/media?page=1&limit=12` | 441 ms, empty paginated payload |
+| Store rename → immediate `/auth/me` freshness | **verified** (tenant-cache invalidation fix `ee2f0d2`) |
+
+The dashboard request count is verified in the **production web** (Vercel already
+runs the new build): exactly **one** `GET /api/v1/dashboard/stats` (previously
+6 parallel collections + up to 50 sequential revenue requests).
 
 ---
 
