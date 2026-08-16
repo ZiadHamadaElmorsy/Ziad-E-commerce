@@ -9,6 +9,7 @@ import {
 } from '../../common/errors/domain-exceptions';
 import { TransactionService } from '../../infrastructure/database/transaction.service';
 import { SubscriptionService } from '../../subscription/services/subscription.service';
+import { TenantContextService } from '../../tenant/tenant-context.service';
 import { assertValidStoreSlug, normalizeStoreSlug } from '../domain/store-slug';
 import { CreateStoreDto } from '../dto/create-store.dto';
 import { UpdateStoreDto } from '../dto/update-store.dto';
@@ -48,6 +49,7 @@ export class StoreService {
     private readonly memberships: StoreMembershipRepository,
     private readonly transaction: TransactionService,
     private readonly subscriptions: SubscriptionService,
+    private readonly tenants: TenantContextService,
   ) {}
 
   /**
@@ -135,12 +137,20 @@ export class StoreService {
     if (!storeId) {
       throw new TenantContextRequiredError('A store tenant context is required.');
     }
+    const authUserId = this.requestContext.getCurrent()?.user?.authUserId;
 
     try {
       // Tenant-scoped transaction: RLS sees the correct tenant for the write.
       const updated = await this.transaction.runWithTenant(storeId, async (tx) =>
         this.stores.update(tx, storeId, { name: dto.name }),
       );
+      // Phase 25 — invalidate the memoized tenant context so the very next
+      // /auth/me (and every tenant-bound read) returns the NEW store name. The
+      // tenant TTL cache would otherwise serve the stale store row for up to
+      // the full window (caught by the web E2E store-edit test).
+      if (authUserId) {
+        this.tenants.invalidateForUser(authUserId);
+      }
       return this.toView(updated);
     } catch (error) {
       throw this.mapStoreWriteError(error);

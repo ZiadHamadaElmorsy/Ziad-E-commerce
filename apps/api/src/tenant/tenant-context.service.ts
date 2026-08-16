@@ -115,6 +115,22 @@ export class TenantContextService {
     this.cache.clear();
   }
 
+  /**
+   * Drops every memoized resolution for one authenticated user. Called by
+   * identity write paths (e.g. `PATCH /stores/current`) so an editable store
+   * field (name) is reflected on the very next `/auth/me` and every tenant-
+   * bound read — the TTL cache would otherwise serve the stale store row for
+   * up to the full window (Phase 25 regression fix caught by the web E2E).
+   */
+  invalidateForUser(authUserId: string): void {
+    const prefix = `${authUserId}|`;
+    for (const key of this.cache.keys()) {
+      if (key.startsWith(prefix)) {
+        this.cache.delete(key);
+      }
+    }
+  }
+
   private cacheKey(authUserId: string, candidateStoreId?: string): string {
     return `${authUserId}|${candidateStoreId ?? ''}`;
   }

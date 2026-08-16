@@ -9,6 +9,7 @@ import {
 } from '../../common/errors/domain-exceptions';
 import { TransactionService } from '../../infrastructure/database/transaction.service';
 import { SubscriptionService } from '../../subscription/services/subscription.service';
+import { TenantContextService } from '../../tenant/tenant-context.service';
 import { CreateStoreDto } from '../dto/create-store.dto';
 import { UpdateStoreDto } from '../dto/update-store.dto';
 import { StoreMembershipRepository } from '../repositories/store-membership.repository';
@@ -23,6 +24,7 @@ describe('StoreService', () => {
   let memberships: { create: jest.Mock };
   let transaction: { run: jest.Mock; runWithTenant: jest.Mock };
   let subscriptions: { startTrial: jest.Mock };
+  let tenants: { invalidateForUser: jest.Mock };
   let service: StoreService;
 
   const storeRow = {
@@ -55,6 +57,7 @@ describe('StoreService', () => {
     memberships = { create: jest.fn() };
     transaction = { run: jest.fn(), runWithTenant: jest.fn() };
     subscriptions = { startTrial: jest.fn().mockResolvedValue(undefined) };
+    tenants = { invalidateForUser: jest.fn() };
 
     // The transaction helper runs the provided work with a fake tx client.
     transaction.run.mockImplementation(async (work: (tx: unknown) => Promise<unknown>) => work({}));
@@ -69,6 +72,7 @@ describe('StoreService', () => {
       memberships as unknown as StoreMembershipRepository,
       transaction as unknown as TransactionService,
       subscriptions as unknown as SubscriptionService,
+      tenants as unknown as TenantContextService,
     );
   });
 
@@ -250,6 +254,21 @@ describe('StoreService', () => {
         name: 'Updated Store',
       });
       expect(result.name).toBe('Updated Store');
+    });
+
+    it('invalidates the memoized tenant context after a successful update (Phase 25)', async () => {
+      requestContext.getCurrent.mockReturnValue({
+        requestId: 'req-1',
+        store: { id: 'store-1' },
+        user: { authUserId: 'auth-1', email: 'owner@example.com' },
+      });
+      stores.update.mockResolvedValue({ ...storeRow, name: 'Updated Store' });
+
+      await service.updateCurrentStore(updateDto());
+
+      // The very next /auth/me must re-resolve the store from the database
+      // instead of serving the stale cached name for up to the TTL.
+      expect(tenants.invalidateForUser).toHaveBeenCalledWith('auth-1');
     });
 
     it('never lets the client choose the target store (cross-tenant prevention)', async () => {

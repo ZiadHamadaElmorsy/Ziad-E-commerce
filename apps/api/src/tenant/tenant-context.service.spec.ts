@@ -230,6 +230,30 @@ describe('TenantContextService', () => {
       expect(prisma.storeMembership.findMany).toHaveBeenCalledTimes(2);
     });
 
+    it('invalidateForUser drops only that user\'s resolutions (Phase 25 store-edit fix)', async () => {
+      prisma.storeMembership.findMany.mockResolvedValue([
+        membership('m-1', 'store-1', 'OWNER', {
+          id: 'store-1',
+          slug: 'my-store',
+          name: 'My Store',
+          status: 'ACTIVE',
+        }),
+      ]);
+
+      await service.resolveForUser('auth-1', 'store-1');
+      await service.resolveForUser('auth-2', 'store-1');
+      service.invalidateForUser('auth-1');
+
+      // auth-1 must re-resolve from the database (its cached store row could
+      // have been edited via PATCH /stores/current)…
+      await service.resolveForUser('auth-1', 'store-1');
+      // …while auth-2's entry survives untouched (no cross-user invalidation).
+      await service.resolveForUser('auth-2', 'store-1');
+
+      // 2 initial resolutions + 1 re-resolution for auth-1 only.
+      expect(prisma.storeMembership.findMany).toHaveBeenCalledTimes(3);
+    });
+
     it('does not cache when the TTL is 0 (caching disabled)', async () => {
       prisma.storeMembership.findMany.mockResolvedValue([
         membership('m-1', 'store-1', 'OWNER', {
