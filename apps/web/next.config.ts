@@ -49,11 +49,18 @@ if (process.env.NODE_ENV === 'production') {
   const supabaseUrl = (process.env.NEXT_PUBLIC_SUPABASE_URL ?? '').trim();
   const supabaseAnonKey = (process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? '').trim();
   const apiUrl = (process.env.NEXT_PUBLIC_API_URL ?? '').trim();
+  // NEXT_PUBLIC_APP_URL is OPTIONAL: lib/config.ts falls back to the canonical
+  // production origin in production builds (single source of truth), so a
+  // fresh Vercel environment can deploy correctly before the variable is
+  // added. When it IS set it must be a valid https:// origin — the production
+  // email-confirmation redirect must never point at http://localhost.
+  const appUrl = (process.env.NEXT_PUBLIC_APP_URL ?? '').trim();
 
   // SAFE diagnostic — booleans only. Appears in the Vercel build log.
   console.log('[env:check] NEXT_PUBLIC_SUPABASE_URL present:', supabaseUrl.length > 0);
   console.log('[env:check] NEXT_PUBLIC_SUPABASE_ANON_KEY present:', supabaseAnonKey.length > 0);
   console.log('[env:check] NEXT_PUBLIC_API_URL present:', apiUrl.length > 0);
+  console.log('[env:check] NEXT_PUBLIC_APP_URL present:', appUrl.length > 0);
 
   const missing: string[] = [];
   if (supabaseUrl.length === 0) missing.push('NEXT_PUBLIC_SUPABASE_URL');
@@ -66,6 +73,7 @@ if (process.env.NODE_ENV === 'production') {
   const urlPlaceholder = supabaseUrl === 'https://YOUR-PROJECT.supabase.co';
   const anonPlaceholder = /YOUR-ANON-KEY|REPLACE/i.test(supabaseAnonKey);
   const apiPlaceholder = /YOUR-|REPLACE|example\.com/i.test(apiUrl);
+  const appPlaceholder = appUrl.length > 0 && /YOUR-|REPLACE|example\.com/i.test(appUrl);
 
   if (missing.length > 0) {
     throw new Error(
@@ -76,7 +84,7 @@ if (process.env.NODE_ENV === 'production') {
         `Production) and trigger a NEW production deployment.`,
     );
   }
-  if (urlPlaceholder || anonPlaceholder || apiPlaceholder) {
+  if (urlPlaceholder || anonPlaceholder || apiPlaceholder || appPlaceholder) {
     throw new Error(
       `[env:check] Production build FAILED: a NEXT_PUBLIC_* variable still holds a placeholder ` +
         `value (e.g. YOUR-PROJECT.supabase.co / YOUR-ANON-KEY / example.com). Replace it with ` +
@@ -87,6 +95,12 @@ if (process.env.NODE_ENV === 'production') {
     throw new Error(
       `[env:check] Production build FAILED: NEXT_PUBLIC_API_URL must be an https:// URL ` +
         `(production web must never talk to http://localhost).`,
+    );
+  }
+  if (appUrl.length > 0 && !/^https:\/\//.test(appUrl)) {
+    throw new Error(
+      `[env:check] Production build FAILED: NEXT_PUBLIC_APP_URL must be an https:// URL ` +
+        `(the production email-confirmation redirect must never point at http://localhost).`,
     );
   }
   if (!/\/api\/v1$/.test(apiUrl)) {

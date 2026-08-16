@@ -14,6 +14,14 @@ vi.mock('@/lib/supabase/client', () => ({
   getSupabaseBrowserClient: () => ({ auth: { signUp: signUpMock } }),
 }));
 
+// Deterministic auth-redirect + support config (independent of the runner env).
+vi.mock('@/lib/config', () => ({
+  appConfig: { supportPhone: '+20 100 000 0000' },
+  emailConfirmationRedirectUrl: () => 'http://localhost:3000/login',
+  supportPhoneHref: (phone: string) =>
+    `tel:${phone.trim().startsWith('+') ? '+' : ''}${phone.replace(/\D/g, '')}`,
+}));
+
 import SignUpPage from './page';
 
 function renderSignUp() {
@@ -115,7 +123,11 @@ describe('SignUp page', () => {
       expect(signUpMock).toHaveBeenCalledWith({
         email: 'merchant@example.com',
         password: 'secret123',
-        options: { data: { first_name: 'Ziad', last_name: 'Owner' } },
+        options: {
+          data: { first_name: 'Ziad', last_name: 'Owner' },
+          // Environment-aware email-confirmation redirect (single source of truth).
+          emailRedirectTo: 'http://localhost:3000/login',
+        },
       }),
     );
     expect(await screen.findByText('Check your email')).toBeInTheDocument();
@@ -162,6 +174,92 @@ describe('SignUp page', () => {
     submit();
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Email provider is unreachable');
+  });
+
+  describe('password visibility', () => {
+    it('hides both password fields by default', () => {
+      renderSignUp();
+
+      expect(passwordInput()).toHaveAttribute('type', 'password');
+      expect(confirmPasswordInput()).toHaveAttribute('type', 'password');
+      expect(
+        screen.getByRole('button', { name: 'Show password' }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole('button', { name: 'Show confirm password' }),
+      ).toBeInTheDocument();
+    });
+
+    it('shows then hides the password without touching confirm password', () => {
+      renderSignUp();
+
+      fireEvent.click(screen.getByRole('button', { name: 'Show password' }));
+      expect(passwordInput()).toHaveAttribute('type', 'text');
+      expect(confirmPasswordInput()).toHaveAttribute('type', 'password');
+      expect(screen.getByRole('button', { name: 'Hide password' })).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole('button', { name: 'Hide password' }));
+      expect(passwordInput()).toHaveAttribute('type', 'password');
+    });
+
+    it('shows then hides the confirm password independently', () => {
+      renderSignUp();
+
+      fireEvent.click(screen.getByRole('button', { name: 'Show confirm password' }));
+      expect(confirmPasswordInput()).toHaveAttribute('type', 'text');
+      expect(passwordInput()).toHaveAttribute('type', 'password');
+      expect(
+        screen.getByRole('button', { name: 'Hide confirm password' }),
+      ).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole('button', { name: 'Hide confirm password' }));
+      expect(confirmPasswordInput()).toHaveAttribute('type', 'password');
+    });
+
+    it('toggling visibility never clears or resets the field value', () => {
+      renderSignUp();
+
+      fireEvent.change(passwordInput(), { target: { value: 'secret123' } });
+      fireEvent.change(confirmPasswordInput(), { target: { value: 'secret123' } });
+
+      fireEvent.click(screen.getByRole('button', { name: 'Show password' }));
+      expect(passwordInput()).toHaveValue('secret123');
+
+      fireEvent.click(screen.getByRole('button', { name: 'Hide password' }));
+      expect(passwordInput()).toHaveValue('secret123');
+
+      fireEvent.click(screen.getByRole('button', { name: 'Show confirm password' }));
+      expect(confirmPasswordInput()).toHaveValue('secret123');
+    });
+
+    it('visibility buttons are type="button" and never submit the form', () => {
+      renderSignUp();
+
+      const passwordToggle = screen.getByRole('button', { name: 'Show password' });
+      expect(passwordToggle).toHaveAttribute('type', 'button');
+
+      fireEvent.click(passwordToggle);
+      expect(signUpMock).not.toHaveBeenCalled();
+    });
+  });
+
+  it('replaces the internal Supabase footnote with a customer support contact', async () => {
+    signUpMock.mockResolvedValue({ data: { session: null, user: { id: 'u-1' } }, error: null });
+    renderSignUp();
+
+    fillValidForm();
+    submit();
+
+    expect(await screen.findByText('Check your email')).toBeInTheDocument();
+    // Customer-facing support line (single configuration value).
+    expect(screen.getByText(/Need help\? Contact support at:/)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '+20 100 000 0000' })).toHaveAttribute(
+      'href',
+      'tel:+201000000000',
+    );
+    // The internal provider/session detail is gone from the UI.
+    expect(screen.queryByText(/Session created by Supabase/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Supabase Auth/i)).not.toBeInTheDocument();
   });
 
   it('links back to the existing login page', () => {

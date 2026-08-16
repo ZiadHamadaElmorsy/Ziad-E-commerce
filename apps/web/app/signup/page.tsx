@@ -8,11 +8,50 @@ import type { TranslationKey } from '@/lib/i18n/translations';
 import { Button } from '@/components/ui/Button';
 import { Field, Input } from '@/components/ui/FormControls';
 import { LanguageSwitcher } from '@/components/ui/LanguageSwitcher';
+import { SupportContact } from '@/components/auth/SupportContact';
 import { isEmail } from '@/lib/utils';
 import { getSupabaseBrowserClient } from '@/lib/supabase/client';
+import { emailConfirmationRedirectUrl } from '@/lib/config';
 
 /** Session-storage key carrying the store name from signup to onboarding. */
 export const ONBOARDING_STORE_NAME_KEY = 'ziad.onboarding.storeName';
+
+/**
+ * Inline password-visibility eye icon (the app has no icon library; these are
+ * the standard feather/lucide eye + eye-off glyphs, stroke = currentColor so
+ * they inherit the button color).
+ */
+function PasswordEyeIcon({ shown }: { shown: boolean }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+    >
+      {shown ? (
+        <>
+          <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" />
+          <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" />
+          <path d="M14.12 14.12a3 3 0 1 1-4.24-4.24" />
+          <line x1="1" y1="1" x2="23" y2="23" />
+        </>
+      ) : (
+        <>
+          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+          <circle cx="12" cy="12" r="3" />
+        </>
+      )}
+    </svg>
+  );
+}
 
 /**
  * Maps a Supabase Auth signup error to a localized, user-friendly message
@@ -56,6 +95,10 @@ export default function SignUpPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
+  // Independent visibility state per field — toggling one never affects the
+  // other, and toggling never clears or resubmits the field's value.
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
   const [firstNameError, setFirstNameError] = useState<string | undefined>();
   const [lastNameError, setLastNameError] = useState<string | undefined>();
   const [storeNameError, setStoreNameError] = useState<string | undefined>();
@@ -119,6 +162,10 @@ export default function SignUpPage() {
             first_name: firstName.trim(),
             last_name: lastName.trim(),
           },
+          // Environment-aware redirect target for the email-confirmation link
+          // (localhost in development, the production origin in production).
+          // This is the ONLY place the confirmation redirect URL is generated.
+          emailRedirectTo: emailConfirmationRedirectUrl(),
         },
       });
       if (error) {
@@ -168,6 +215,7 @@ export default function SignUpPage() {
             </Link>
           </div>
           <p className="login__footnote">{t('auth.backToLogin')}</p>
+          <SupportContact className="login__footnote" />
         </div>
       </div>
     );
@@ -255,15 +303,26 @@ export default function SignUpPage() {
           </Field>
 
           <Field label={t('auth.password')} htmlFor="password" required error={passwordError}>
-            <Input
-              id="password"
-              name="password"
-              type="password"
-              autoComplete="new-password"
-              placeholder="••••••••"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-            />
+            <div className="password-input">
+              <Input
+                id="password"
+                name="password"
+                type={showPassword ? 'text' : 'password'}
+                autoComplete="new-password"
+                placeholder="••••••••"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+              />
+              <button
+                type="button"
+                className="password-input__toggle"
+                aria-label={showPassword ? t('auth.hidePassword') : t('auth.showPassword')}
+                aria-pressed={showPassword}
+                onClick={() => setShowPassword((visible) => !visible)}
+              >
+                <PasswordEyeIcon shown={showPassword} />
+              </button>
+            </div>
           </Field>
 
           <Field
@@ -272,15 +331,26 @@ export default function SignUpPage() {
             required
             error={confirmError}
           >
-            <Input
-              id="confirm-password"
-              name="confirm-password"
-              type="password"
-              autoComplete="new-password"
-              placeholder="••••••••"
-              value={confirm}
-              onChange={(event) => setConfirm(event.target.value)}
-            />
+            <div className="password-input">
+              <Input
+                id="confirm-password"
+                name="confirm-password"
+                type={showConfirm ? 'text' : 'password'}
+                autoComplete="new-password"
+                placeholder="••••••••"
+                value={confirm}
+                onChange={(event) => setConfirm(event.target.value)}
+              />
+              <button
+                type="button"
+                className="password-input__toggle"
+                aria-label={showConfirm ? t('auth.hideConfirmPassword') : t('auth.showConfirmPassword')}
+                aria-pressed={showConfirm}
+                onClick={() => setShowConfirm((visible) => !visible)}
+              >
+                <PasswordEyeIcon shown={showConfirm} />
+              </button>
+            </div>
           </Field>
 
           <Button type="submit" className="login__submit" size="lg" loading={submitting}>
@@ -295,6 +365,7 @@ export default function SignUpPage() {
           </Link>
         </p>
         <p className="login__footnote">{t('auth.signUpNote')}</p>
+        <SupportContact className="login__footnote" />
       </div>
     </div>
   );

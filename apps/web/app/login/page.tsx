@@ -8,6 +8,7 @@ import { merchantHomePath } from '@/lib/auth/merchant-route';
 import { Button } from '@/components/ui/Button';
 import { Field, Input } from '@/components/ui/FormControls';
 import { LanguageSwitcher } from '@/components/ui/LanguageSwitcher';
+import { SupportContact } from '@/components/auth/SupportContact';
 import { isEmail } from '@/lib/utils';
 
 /** Login form (rendered inside AuthProvider so it can react to sessions). */
@@ -117,7 +118,7 @@ function LoginForm() {
           </Button>
         </form>
 
-        <p className="login__footnote">{t('auth.footnote')}</p>
+        <SupportContact className="login__footnote" />
       </div>
     </div>
   );
