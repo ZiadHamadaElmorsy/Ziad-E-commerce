@@ -1,4 +1,3 @@
--- ---------------------------------------------------------------------------
 -- Ziad E-commerce — Phase 27: Cash on Delivery + Shipping (Bosta integration)
 -- ---------------------------------------------------------------------------
 -- Extends the existing schema WITHOUT touching working modules:
@@ -72,6 +71,13 @@ CREATE TABLE IF NOT EXISTS "shipments" (
   "updated_at" TIMESTAMPTZ NOT NULL DEFAULT now(),
   "delivered_at" TIMESTAMPTZ,
   CONSTRAINT "shipments_pkey" PRIMARY KEY ("id"),
+  CONSTRAINT "shipments_store_id_fkey" FOREIGN KEY ("store_id")
+    REFERENCES "stores"("id") ON DELETE RESTRICT ON UPDATE CASCADE,
+  CONSTRAINT "shipments_store_order_fkey" FOREIGN KEY ("store_id", "order_id")
+    REFERENCES "orders"("store_id", "id") ON DELETE RESTRICT ON UPDATE CASCADE,
+  CONSTRAINT "shipments_cod_amount_check" CHECK ("cod_amount" >= 0),
+  CONSTRAINT "shipments_shipping_cost_check" CHECK ("shipping_cost" >= 0)
+);
 
 CREATE UNIQUE INDEX IF NOT EXISTS "shipments_store_id_order_id_key"
   ON "shipments" ("store_id", "order_id");
@@ -166,11 +172,3 @@ CREATE POLICY public_storefront_select ON "shipment_status_history"
 -- DML grants for the enforcement role (created after the ALL-TABLES grant).
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "shipments" TO ziad_runtime;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "shipment_status_history" TO ziad_runtime;
-
-  CONSTRAINT "shipments_store_id_fkey" FOREIGN KEY ("store_id")
-    REFERENCES "stores"("id") ON DELETE RESTRICT ON UPDATE CASCADE,
-  CONSTRAINT "shipments_store_order_fkey" FOREIGN KEY ("store_id", "order_id")
-    REFERENCES "orders"("store_id", "id") ON DELETE RESTRICT ON UPDATE CASCADE,
-  CONSTRAINT "shipments_cod_amount_check" CHECK ("cod_amount" >= 0),
-  CONSTRAINT "shipments_shipping_cost_check" CHECK ("shipping_cost" >= 0)
-);
