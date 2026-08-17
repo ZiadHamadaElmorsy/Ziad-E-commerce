@@ -96,4 +96,21 @@ export class PaymentEventRepository {
   async findById(storeId: string, eventId: string): Promise<PaymentEvent | null> {
     return this.prisma.paymentEvent.findFirst({ where: { id: eventId, storeId } });
   }
+
+  /**
+   * The retry/reprocessing scan (Phase 28 — F-3): RECEIVED/ERROR events, oldest
+   * first, in a bounded batch. Served by the partial index
+   * `idx_payment_events_processing_status` (DATABASE §11). Runs on the shared
+   * client — payment_events has no tenant-scoped policy until store_id is set,
+   * matching the webhook claim path (DATABASE §29.2).
+   */
+  async findUnprocessed(limit: number): Promise<PaymentEvent[]> {
+    return this.prisma.paymentEvent.findMany({
+      where: {
+        processingStatus: { in: [EventProcessingStatus.RECEIVED, EventProcessingStatus.ERROR] },
+      },
+      orderBy: { createdAt: 'asc' },
+      take: limit,
+    });
+  }
 }

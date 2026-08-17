@@ -10,6 +10,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Input, Select } from '@/components/ui/FormControls';
+import { FilterBar } from '@/components/ui/FilterBar';
 import { StatusBadge } from '@/components/ui/Badge';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorState } from '@/components/ui/ErrorState';
@@ -161,15 +162,25 @@ export default function ProductsPage() {
       />
 
       <Card>
-        <div className="filters">
-          <div className="filters__search">
+        <FilterBar
+          search={
             <Input
               aria-label={t('products.searchPlaceholder')}
               placeholder={t('products.searchPlaceholder')}
               value={searchDraft}
               onChange={(event) => onSearchChange(event.target.value)}
             />
-          </div>
+          }
+          activeCount={(status ? 1 : 0) + (categoryId ? 1 : 0)}
+          onClear={
+            search || status || categoryId
+              ? () => {
+                  setSearchDraft('');
+                  router.replace('/dashboard/products');
+                }
+              : undefined
+          }
+        >
           <Select
             aria-label={t('products.filterStatus')}
             value={status}
@@ -193,18 +204,7 @@ export default function ProductsPage() {
               </option>
             ))}
           </Select>
-          {(search || status || categoryId) && (
-            <Button
-              variant="ghost"
-              onClick={() => {
-                setSearchDraft('');
-                router.replace('/dashboard/products');
-              }}
-            >
-              {t('common.clearFilters')}
-            </Button>
-          )}
-        </div>
+        </FilterBar>
 
         {error ? (
           <ErrorState message={error} onRetry={() => void load()} />
@@ -250,25 +250,25 @@ export default function ProductsPage() {
                     : null;
                   return (
                     <tr key={product.id}>
-                      <td>
+                      <td data-label={t('products.table.name')}>
                         <Link href={`/dashboard/products/${product.id}`} className="link">
                           {product.name}
                         </Link>
                         <div className="table__muted">/{product.slug}</div>
                       </td>
-                      <td>
+                      <td data-label={t('products.table.status')}>
                         <StatusBadge status={product.status} />
                       </td>
-                      <td>
+                      <td data-label={t('products.table.variants')}>
                         {activeVariants.length > 0
                           ? t('products.activeVariants', { count: activeVariants.length })
                           : product.variants.length > 0
                             ? t('products.archivedVariants', { count: product.variants.length })
                             : '—'}
                       </td>
-                      <td>{formatEgpHtml(minPrice)}</td>
+                      <td data-label={t('products.table.price')}>{formatEgpHtml(minPrice)}</td>
 
-                      <td>
+                      <td data-label="">
                         <div className="table__actions">
                           <Link
                             href={`/dashboard/products/${product.id}`}

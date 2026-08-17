@@ -8,6 +8,7 @@ import type {
   StorefrontNavigation,
   StorefrontPage,
   StorefrontProduct,
+  StorefrontProductMedia,
   StorefrontStore,
   StorefrontTheme,
 } from '@/lib/storefront/types';
@@ -115,6 +116,22 @@ export const storefrontApi = {
     storefrontFetch<Envelope<StorefrontProduct>>(
       slug,
       `/storefront/products/${encodeURIComponent(productSlug)}`,
+    ),
+
+  /**
+   * Paginated storefront gallery (Phase 26). `variantId` filters to the images
+   * linked to a specific variant. Returns ordered associations so the client
+   * can render variant-aware galleries with a product-level fallback.
+   */
+  listProductMedia: (
+    slug: string,
+    productSlug: string,
+    params: { page?: number; limit?: number; variantId?: string } = {},
+  ) =>
+    storefrontFetch<Paginated<StorefrontProductMedia>>(
+      slug,
+      `/storefront/products/${encodeURIComponent(productSlug)}/media`,
+      { query: { page: params.page, limit: params.limit, variantId: params.variantId } },
     ),
 
   listCategories: (slug: string, params: { page?: number; limit?: number } = {}) =>

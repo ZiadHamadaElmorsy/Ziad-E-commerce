@@ -1,12 +1,10 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { useParams } from 'next/navigation';
-import Link from 'next/link';
 import { useI18n } from '@/lib/i18n/i18n-context';
 import { catalogApi } from '@/lib/api/catalog';
 import { inventoryApi } from '@/lib/api/inventory';
-import { mediaApi } from '@/lib/api/media';
 import type {
   CategoryView,
   InventoryView,
@@ -14,11 +12,13 @@ import type {
   ProductView,
   VariantView,
 } from '@/lib/api/types';
-import { DashboardMediaImage } from '@/components/dashboard/DashboardMediaImage';
+import { ProductCategorySelector } from '@/components/dashboard/ProductCategorySelector';
+import { ProductGalleryManager } from '@/components/dashboard/ProductGalleryManager';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { Breadcrumbs } from '@/components/ui/Breadcrumbs';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
-import { Field, Input, Textarea, Select } from '@/components/ui/FormControls';
+import { Field, Input, Textarea } from '@/components/ui/FormControls';
 import { StatusBadge } from '@/components/ui/Badge';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorState } from '@/components/ui/ErrorState';
@@ -49,12 +49,21 @@ interface LifecycleTarget {
 
 interface VariantFormState {
   name: string;
+  color: string;
+  size: string;
   sku: string;
   price: string;
   compareAtPrice: string;
 }
 
-const EMPTY_VARIANT_FORM: VariantFormState = { name: '', sku: '', price: '', compareAtPrice: '' };
+const EMPTY_VARIANT_FORM: VariantFormState = {
+  name: '',
+  color: '',
+  size: '',
+  sku: '',
+  price: '',
+  compareAtPrice: '',
+};
 
 export default function ProductDetailsPage() {
   const params = useParams<{ productId: string }>();
@@ -63,13 +72,14 @@ export default function ProductDetailsPage() {
   const toast = useToast();
 
   const [product, setProduct] = useState<ProductView | null>(null);
-  const [categories, setCategories] = useState<CategoryView[]>([]);
   const [assignedCategories, setAssignedCategories] = useState<CategoryView[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   // Edit form
   const [name, setName] = useState('');
+  const [nameAr, setNameAr] = useState('');
+  const [nameEn, setNameEn] = useState('');
   const [description, setDescription] = useState('');
   const [saving, setSaving] = useState(false);
   const [nameError, setNameError] = useState<string | undefined>();
@@ -98,29 +108,20 @@ export default function ProductDetailsPage() {
   const [movements, setMovements] = useState<MovementView[]>([]);
   const [movementsLoading, setMovementsLoading] = useState(false);
 
-  // Product images
-  const [selectedMediaFile, setSelectedMediaFile] = useState<File | null>(null);
-  const [mediaPreviewUrl, setMediaPreviewUrl] = useState<string | null>(null);
-  const [mediaAltText, setMediaAltText] = useState('');
-  const [uploadingMedia, setUploadingMedia] = useState(false);
-  const [mediaError, setMediaError] = useState<string | null>(null);
-  const [removingImageId, setRemovingImageId] = useState<string | null>(null);
-  const previewObjectUrl = useRef<string | null>(null);
-
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const [productResult, categoriesResult, assignedResult] = await Promise.all([
+      const [productResult, assignedResult] = await Promise.all([
         catalogApi.getProduct(productId),
-        catalogApi.listCategories({ page: 1, limit: 100 }),
         catalogApi.listProductCategories(productId),
       ]);
       const loaded = productResult.data;
       setProduct(loaded);
       setName(loaded.name);
+      setNameAr(loaded.nameAr ?? '');
+      setNameEn(loaded.nameEn ?? '');
       setDescription(loaded.description ?? '');
-      setCategories(categoriesResult.data);
       setAssignedCategories(assignedResult.data);
     } catch (caught) {
       setError(apiErrorMessage(caught, t, 'products.details.loadFailed'));
@@ -179,6 +180,8 @@ export default function ProductDetailsPage() {
     try {
       const result = await catalogApi.updateProduct(product.id, {
         name: name.trim(),
+        nameAr: nameAr.trim() || null,
+        nameEn: nameEn.trim() || null,
         description: description.trim() ? description.trim() : null,
       });
       setProduct(result.data);
@@ -191,54 +194,8 @@ export default function ProductDetailsPage() {
   };
 
   // --- Product images ---------------------------------------------------------
-
-  const handleMediaFileChange = (file: File | null) => {
-    if (previewObjectUrl.current) {
-      URL.revokeObjectURL(previewObjectUrl.current);
-      previewObjectUrl.current = null;
-    }
-    setSelectedMediaFile(file);
-    setMediaPreviewUrl(null);
-    setMediaError(null);
-    if (file) {
-      previewObjectUrl.current = URL.createObjectURL(file);
-      setMediaPreviewUrl(previewObjectUrl.current);
-    }
-  };
-
-  const handleUploadImage = async () => {
-    if (!product || !selectedMediaFile) return;
-    setUploadingMedia(true);
-    setMediaError(null);
-    try {
-      const uploaded = await mediaApi.upload(selectedMediaFile, mediaAltText.trim() || undefined);
-      const updated = await catalogApi.attachMedia(product.id, uploaded.data.id);
-      setProduct(updated.data);
-      handleMediaFileChange(null);
-      setMediaAltText('');
-      toast.success(t('products.details.imageUploadedToast'));
-    } catch (caught) {
-      setMediaError(apiErrorMessage(caught, t, 'products.details.imageUploadFailed'));
-    } finally {
-      setUploadingMedia(false);
-    }
-  };
-
-  const handleRemoveImage = async (mediaId: string) => {
-    if (!product) return;
-    setRemovingImageId(mediaId);
-    setMediaError(null);
-    try {
-      await catalogApi.removeMedia(product.id, mediaId);
-      const reloaded = await catalogApi.getProduct(product.id);
-      setProduct(reloaded.data);
-      toast.success(t('products.details.imageRemovedToast'));
-    } catch (caught) {
-      toast.error(apiErrorMessage(caught, t, 'products.details.imageRemoveFailed'));
-    } finally {
-      setRemovingImageId(null);
-    }
-  };
+  // The gallery (upload queue, pagination, reorder, primary, variant links) is
+  // rendered by ProductGalleryManager; this page only reloads after changes.
 
   // --- Lifecycle ------------------------------------------------------------
 
@@ -281,6 +238,8 @@ export default function ProductDetailsPage() {
     setEditingVariant(variant);
     setVariantForm({
       name: variant.name,
+      color: variant.attributes?.color ?? '',
+      size: variant.attributes?.size ?? '',
       sku: variant.sku ?? '',
       price: fromPiastres(variant.price),
       compareAtPrice: fromPiastres(variant.compareAtPrice),
@@ -307,8 +266,13 @@ export default function ProductDetailsPage() {
     if (!product) return;
     if (!validateVariantForm()) return;
 
+    const attributes: Record<string, string> = {};
+    if (variantForm.color.trim()) attributes.color = variantForm.color.trim();
+    if (variantForm.size.trim()) attributes.size = variantForm.size.trim();
+
     const payload = {
       name: variantForm.name.trim(),
+      ...(Object.keys(attributes).length > 0 ? { attributes } : {}),
       sku: variantForm.sku.trim() || undefined,
       price: toPiastres(variantForm.price) as number,
       compareAtPrice: variantForm.compareAtPrice.trim()
@@ -350,10 +314,6 @@ export default function ProductDetailsPage() {
   };
 
   // --- Category assignment ------------------------------------------------------
-
-  const unassignedCategories = categories.filter(
-    (category) => !assignedCategories.some((assigned) => assigned.id === category.id),
-  );
 
   const handleAssignCategory = async (categoryId: string) => {
     if (!product) return;
@@ -433,7 +393,33 @@ export default function ProductDetailsPage() {
   if (loading) {
     return (
       <div className="page">
-        <LoadingBlock label={t('products.details.loading')} />
+        <div className="skeleton skeleton--line skeleton-title" aria-hidden="true" />
+        <div className="detail-grid">
+          <div className="detail-grid__main">
+            <div className="card" aria-hidden="true">
+              <div className="card__body skeleton-form-block">
+                <span className="skeleton skeleton--block" />
+                <span className="skeleton skeleton--block" />
+                <span className="skeleton skeleton--block" />
+                <span className="skeleton skeleton--block skeleton-form-block__tall" />
+              </div>
+            </div>
+            <div className="card" aria-hidden="true">
+              <div className="card__body skeleton-form-block">
+                <span className="skeleton skeleton--block" />
+                <span className="skeleton skeleton--block skeleton-form-block__tall" />
+              </div>
+            </div>
+          </div>
+          <aside className="detail-grid__side" aria-hidden="true">
+            <div className="card">
+              <div className="card__body skeleton-form-block">
+                <span className="skeleton skeleton--block" />
+                <span className="skeleton skeleton--block" />
+              </div>
+            </div>
+          </aside>
+        </div>
       </div>
     );
   }
@@ -448,6 +434,13 @@ export default function ProductDetailsPage() {
 
   return (
     <div className="page">
+      <Breadcrumbs
+        items={[
+          { label: t('nav.dashboard'), href: '/dashboard' },
+          { label: t('nav.products'), href: '/dashboard/products' },
+          { label: product.name },
+        ]}
+      />
       <PageHeader
         title={product.name}
         description={`/${product.slug}`}
@@ -485,6 +478,29 @@ export default function ProductDetailsPage() {
                   />
                 </Field>
                 <Field
+                  label={t('products.details.nameAr')}
+                  htmlFor="product-name-ar"
+                  hint={t('products.details.nameArHint')}
+                >
+                  <Input
+                    id="product-name-ar"
+                    value={nameAr}
+                    onChange={(event) => setNameAr(event.target.value)}
+                    dir="rtl"
+                  />
+                </Field>
+                <Field
+                  label={t('products.details.nameEn')}
+                  htmlFor="product-name-en"
+                  hint={t('products.details.nameEnHint')}
+                >
+                  <Input
+                    id="product-name-en"
+                    value={nameEn}
+                    onChange={(event) => setNameEn(event.target.value)}
+                  />
+                </Field>
+                <Field
                   label={t('common.description')}
                   htmlFor="product-description"
                   hint={t('products.new.descriptionHint')}
@@ -509,84 +525,11 @@ export default function ProductDetailsPage() {
             title={t('products.details.images')}
             description={t('products.details.imagesDesc')}
           >
-            {product.images.length === 0 ? (
-              <EmptyState
-                icon="🖼"
-                title={t('products.details.imagesEmpty')}
-                description={t('products.details.imagesEmptyDesc')}
-              />
-            ) : (
-              <div className="product-gallery">
-                {product.images.map((image) => (
-                  <div key={image.id} className="product-gallery__item">
-                    <DashboardMediaImage
-                      mediaId={image.id}
-                      alt={image.altText ?? product.name}
-                      className="product-gallery__thumb"
-                    />
-                    <button
-                      type="button"
-                      className="product-gallery__remove"
-                      aria-label={t('products.details.removeImageAria')}
-                      disabled={removingImageId === image.id}
-                      onClick={() => void handleRemoveImage(image.id)}
-                    >
-                      {removingImageId === image.id ? t('common.saving') : '✕'}
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            <div className="image-upload">
-              <div className="form-grid">
-                <Field
-                  label={t('products.details.imageFile')}
-                  htmlFor="product-image-file"
-                  hint={t('media.altTextHint')}
-                >
-                  <Input
-                    id="product-image-file"
-                    type="file"
-                    accept="image/jpeg,image/png,image/webp,image/gif,image/avif"
-                    onChange={(event) => handleMediaFileChange(event.target.files?.[0] ?? null)}
-                  />
-                </Field>
-                <Field label={t('media.altText')} htmlFor="product-image-alt">
-                  <Input
-                    id="product-image-alt"
-                    value={mediaAltText}
-                    onChange={(event) => setMediaAltText(event.target.value)}
-                  />
-                </Field>
-              </div>
-
-              {mediaPreviewUrl ? (
-                // eslint-disable-next-line @next/next/no-img-element -- local file preview before upload
-                <img
-                  src={mediaPreviewUrl}
-                  alt={t('products.details.imagePreviewAlt')}
-                  className="image-upload__preview"
-                />
-              ) : null}
-
-              {mediaError ? (
-                <p className="alert alert--error" role="alert">
-                  {mediaError}
-                </p>
-              ) : null}
-
-              <div className="form-actions">
-                <Button
-                  type="button"
-                  onClick={() => void handleUploadImage()}
-                  disabled={!selectedMediaFile || !product}
-                  loading={uploadingMedia}
-                >
-                  {uploadingMedia ? t('media.uploading') : t('products.details.uploadImage')}
-                </Button>
-              </div>
-            </div>
+            <ProductGalleryManager
+              productId={product.id}
+              variants={product.variants}
+              onChanged={() => void load()}
+            />
           </Card>
 
           <Card
@@ -623,14 +566,16 @@ export default function ProductDetailsPage() {
                 <tbody>
                   {product.variants.map((variant) => (
                     <tr key={variant.id}>
-                      <td>{variant.name}</td>
-                      <td>{variant.sku ?? '—'}</td>
-                      <td>{formatEgpHtml(variant.price)}</td>
-                      <td>{formatEgpHtml(variant.compareAtPrice)}</td>
-                      <td>
+                      <td data-label={t('common.name')}>{variant.name}</td>
+                      <td data-label={t('products.details.sku')}>{variant.sku ?? '—'}</td>
+                      <td data-label={t('common.price')}>{formatEgpHtml(variant.price)}</td>
+                      <td data-label={t('products.details.compareAt')}>
+                        {formatEgpHtml(variant.compareAtPrice)}
+                      </td>
+                      <td data-label={t('common.status')}>
                         <StatusBadge status={variant.status} />
                       </td>
-                      <td>
+                      <td data-label="">
                         <div className="table__actions">
                           {variant.status === 'ACTIVE' ? (
                             <Button
@@ -680,11 +625,11 @@ export default function ProductDetailsPage() {
                     const level = inventory[variant.id];
                     return (
                       <tr key={variant.id}>
-                        <td>{variant.name}</td>
-                        <td>{level?.onHand ?? '—'}</td>
-                        <td>{level?.reserved ?? '—'}</td>
-                        <td>{level?.available ?? '—'}</td>
-                        <td>
+                        <td data-label={t('inventory.table.variant')}>{variant.name}</td>
+                        <td data-label={t('inventory.onHand')}>{level?.onHand ?? '—'}</td>
+                        <td data-label={t('inventory.reserved')}>{level?.reserved ?? '—'}</td>
+                        <td data-label={t('inventory.available')}>{level?.available ?? '—'}</td>
+                        <td data-label="">
                           <div className="table__actions">
                             {variant.status === 'ACTIVE' ? (
                               <Button
@@ -726,56 +671,28 @@ export default function ProductDetailsPage() {
             title={t('products.details.categories')}
             description={t('products.details.categoriesDesc')}
           >
-            {assignedCategories.length === 0 ? (
-              <p className="card__muted">{t('products.details.noCategories')}</p>
-            ) : (
-              <ul className="category-chip-list">
-                {assignedCategories.map((category) => (
-                  <li key={category.id} className="category-chip">
-                    <Link
-                      href={`/dashboard/categories/${category.id}`}
-                      className="category-chip__name"
-                    >
-                      {category.name}
-                    </Link>
-                    <button
-                      type="button"
-                      className="category-chip__remove"
-                      aria-label={t('products.details.removeAria', { name: category.name })}
-                      onClick={() => setRemoveCategory(category)}
-                    >
-                      ✕
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-
-            <div className="assign-category">
-              <Select
-                aria-label={t('products.details.assignLabel')}
-                value=""
-                onChange={(event) => {
-                  if (event.target.value) {
-                    void handleAssignCategory(event.target.value);
-                  }
-                }}
-              >
-                <option value="">{t('products.details.assignPlaceholder')}</option>
-                {unassignedCategories.map((category) => (
-                  <option key={category.id} value={category.id}>
-                    {category.name}
-                  </option>
-                ))}
-              </Select>
-              {unassignedCategories.length === 0 ? (
-                <p className="card__muted">
-                  {categories.length === 0
-                    ? t('products.details.noCategoriesExist')
-                    : t('products.details.assignedToAll')}
-                </p>
-              ) : null}
-            </div>
+            <ProductCategorySelector
+              value={assignedCategories}
+              onChange={(next) => {
+                const removed = assignedCategories.filter(
+                  (category) => !next.some((c) => c.id === category.id),
+                );
+                const added = next.filter(
+                  (category) => !assignedCategories.some((c) => c.id === category.id),
+                );
+                setAssignedCategories(next);
+                for (const category of added) {
+                  void handleAssignCategory(category.id);
+                }
+                for (const category of removed) {
+                  void catalogApi.removeCategory(product.id, category.id).catch((error) => {
+                    toast.error(
+                      apiErrorMessage(error, t, 'products.details.categoryRemoveFailed'),
+                    );
+                  });
+                }
+              }}
+            />
           </Card>
         </aside>
       </div>
@@ -808,6 +725,30 @@ export default function ProductDetailsPage() {
               value={variantForm.name}
               onChange={(event) => setVariantForm({ ...variantForm, name: event.target.value })}
               placeholder="Black / Medium"
+            />
+          </Field>
+          <Field
+            label={t('products.details.color')}
+            htmlFor="variant-color"
+            hint={t('products.details.colorPlaceholder')}
+          >
+            <Input
+              id="variant-color"
+              value={variantForm.color}
+              onChange={(event) => setVariantForm({ ...variantForm, color: event.target.value })}
+              placeholder={t('products.details.colorPlaceholder')}
+            />
+          </Field>
+          <Field
+            label={t('products.details.size')}
+            htmlFor="variant-size"
+            hint={t('products.details.sizePlaceholder')}
+          >
+            <Input
+              id="variant-size"
+              value={variantForm.size}
+              onChange={(event) => setVariantForm({ ...variantForm, size: event.target.value })}
+              placeholder={t('products.details.sizePlaceholder')}
             />
           </Field>
           <Field label={t('products.details.sku')} htmlFor="variant-sku" error={variantErrors.sku}>
@@ -881,6 +822,30 @@ export default function ProductDetailsPage() {
               id="variant-name-edit"
               value={variantForm.name}
               onChange={(event) => setVariantForm({ ...variantForm, name: event.target.value })}
+            />
+          </Field>
+          <Field
+            label={t('products.details.color')}
+            htmlFor="variant-color-edit"
+            hint={t('products.details.colorPlaceholder')}
+          >
+            <Input
+              id="variant-color-edit"
+              value={variantForm.color}
+              onChange={(event) => setVariantForm({ ...variantForm, color: event.target.value })}
+              placeholder={t('products.details.colorPlaceholder')}
+            />
+          </Field>
+          <Field
+            label={t('products.details.size')}
+            htmlFor="variant-size-edit"
+            hint={t('products.details.sizePlaceholder')}
+          >
+            <Input
+              id="variant-size-edit"
+              value={variantForm.size}
+              onChange={(event) => setVariantForm({ ...variantForm, size: event.target.value })}
+              placeholder={t('products.details.sizePlaceholder')}
             />
           </Field>
           <Field
@@ -997,13 +962,15 @@ export default function ProductDetailsPage() {
             <tbody>
               {movements.map((movement) => (
                 <tr key={movement.id}>
-                  <td>
+                  <td data-label={t('inventory.table.type')}>
                     <StatusBadge status={movement.movementType} />
                   </td>
-                  <td>{movement.quantity > 0 ? `+${movement.quantity}` : movement.quantity}</td>
-                  <td>{movement.reason ?? '—'}</td>
-                  <td>{movement.onHandAfter}</td>
-                  <td>{formatDate(movement.createdAt)}</td>
+                  <td data-label={t('inventory.table.quantity')}>
+                    {movement.quantity > 0 ? `+${movement.quantity}` : movement.quantity}
+                  </td>
+                  <td data-label={t('inventory.table.reason')}>{movement.reason ?? '—'}</td>
+                  <td data-label={t('inventory.table.after')}>{movement.onHandAfter}</td>
+                  <td data-label={t('inventory.table.date')}>{formatDate(movement.createdAt)}</td>
                 </tr>
               ))}
             </tbody>

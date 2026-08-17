@@ -6,8 +6,9 @@ import { useParams } from 'next/navigation';
 import { useI18n } from '@/lib/i18n/i18n-context';
 import { ordersApi } from '@/lib/api/orders';
 import { paymentsApi, newIdempotencyKey } from '@/lib/api/payments';
-import type { OrderStatus, OrderView, PaymentView } from '@/lib/api/types';
+import type { OrderStatus, OrderView, PaymentView, ShipmentView } from '@/lib/api/types';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { Breadcrumbs } from '@/components/ui/Breadcrumbs';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Select } from '@/components/ui/FormControls';
@@ -26,6 +27,7 @@ const ALLOWED_NEXT: Record<OrderStatus, OrderStatus[]> = {
   PROCESSING: ['SHIPPED'],
   SHIPPED: ['DELIVERED'],
   DELIVERED: [],
+  RETURNED: [],
   CANCELLED: [],
 };
 
@@ -86,6 +88,11 @@ export default function OrderDetailsPage() {
   const [initiating, setInitiating] = useState(false);
   const [checkoutUrl, setCheckoutUrl] = useState<string | null>(null);
 
+  // Phase 27 — merchant shipping state (Part 10).
+  const [shipment, setShipment] = useState<ShipmentView | null>(null);
+  const [shipmentLoaded, setShipmentLoaded] = useState(false);
+  const [shippingAction, setShippingAction] = useState(false);
+
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -102,6 +109,16 @@ export default function OrderDetailsPage() {
         setPayment(null);
       } finally {
         setPaymentLoaded(true);
+      }
+      // The shipment may not exist yet -> 404 is a normal "not shipped" state.
+      setShipmentLoaded(false);
+      try {
+        const shipmentResult = await ordersApi.getShipment(orderId);
+        setShipment(shipmentResult.data);
+      } catch {
+        setShipment(null);
+      } finally {
+        setShipmentLoaded(true);
       }
     } catch (caught) {
       setError(apiErrorMessage(caught, t, 'orders.details.loadFailed'));
@@ -154,6 +171,43 @@ export default function OrderDetailsPage() {
     }
   };
 
+  // --- Phase 27 — shipping actions (Part 10) ----------------------------------
+
+  const runShippingAction = async (
+    action: () => Promise<{ data: ShipmentView }>,
+    successMessage: string,
+  ) => {
+    if (!order) return;
+    setShippingAction(true);
+    try {
+      const result = await action();
+      setShipment(result.data);
+      toast.success(successMessage);
+    } catch (caught) {
+      toast.error(apiErrorMessage(caught, t, 'orders.details.shippingActionFailed'));
+    } finally {
+      setShippingAction(false);
+    }
+  };
+
+  const createShipment = () =>
+    runShippingAction(
+      () => ordersApi.createShipment(order!.id),
+      t('orders.details.shipmentCreated'),
+    );
+
+  const refreshShipment = () =>
+    runShippingAction(
+      () => ordersApi.refreshShipment(order!.id),
+      t('orders.details.shipmentRefreshed'),
+    );
+
+  const cancelShipment = () =>
+    runShippingAction(
+      () => ordersApi.cancelShipment(order!.id),
+      t('orders.details.shipmentCancelled'),
+    );
+
   if (loading) {
     return (
       <div className="page">
@@ -172,6 +226,13 @@ export default function OrderDetailsPage() {
 
   return (
     <div className="page">
+      <Breadcrumbs
+        items={[
+          { label: t('nav.dashboard'), href: '/dashboard' },
+          { label: t('nav.orders'), href: '/dashboard/orders' },
+          { label: order.orderNumber },
+        ]}
+      />
       <PageHeader
         title={order.orderNumber}
         description={`${t('orders.details.placedAt')} ${formatDate(order.createdAt)}`}
@@ -209,12 +270,16 @@ export default function OrderDetailsPage() {
                 <tbody>
                   {order.items.map((item) => (
                     <tr key={item.id}>
-                      <td>{item.productName}</td>
-                      <td>{item.variantName}</td>
-                      <td>{item.sku ?? '—'}</td>
-                      <td>{formatEgpHtml(item.unitPrice)}</td>
-                      <td>{item.quantity}</td>
-                      <td>{formatEgpHtml(item.lineTotal)}</td>
+                      <td data-label={t('orders.details.itemProduct')}>{item.productName}</td>
+                      <td data-label={t('orders.details.itemVariant')}>{item.variantName}</td>
+                      <td data-label={t('orders.details.itemSku')}>{item.sku ?? '—'}</td>
+                      <td data-label={t('orders.details.itemUnitPrice')}>
+                        {formatEgpHtml(item.unitPrice)}
+                      </td>
+                      <td data-label={t('orders.details.itemQty')}>{item.quantity}</td>
+                      <td data-label={t('orders.details.itemLineTotal')}>
+                        {formatEgpHtml(item.lineTotal)}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -267,15 +332,148 @@ export default function OrderDetailsPage() {
                 <tbody>
                   {order.reservations.map((reservation) => (
                     <tr key={reservation.id}>
-                      <td>{reservation.variantId}</td>
-                      <td>{reservation.quantity}</td>
-                      <td>
+                      <td data-label={t('orders.details.itemVariant')}>
+                        {reservation.variantId}
+                      </td>
+                      <td data-label={t('orders.details.itemQty')}>{reservation.quantity}</td>
+                      <td data-label={t('common.status')}>
                         <StatusBadge status={reservation.status} />
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
+            )}
+          </Card>
+
+          {/* Phase 27 — merchant shipping (Part 10). */}
+          <Card
+            title={t('orders.details.shippingTitle')}
+            description={t('orders.details.shippingDesc')}
+          >
+            {!shipmentLoaded ? (
+              <LoadingBlock label={t('common.loading')} />
+            ) : shipment === null ? (
+              <div className="card__muted">
+                <p>{t('orders.details.noShipment')}</p>
+                <div className="form-actions">
+                  <Button
+                    onClick={() => void createShipment()}
+                    loading={shippingAction}
+                    variant="secondary"
+                    data-testid="create-shipment"
+                  >
+                    {t('orders.details.createShipment')}
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <div>
+                <dl className="meta-list meta-list--grid">
+                  <div>
+                    <dt>{t('orders.details.shippingProvider')}</dt>
+                    <dd data-testid="shipment-provider">{shipment.provider}</dd>
+                  </div>
+                  <div>
+                    <dt>{t('orders.details.trackingNumber')}</dt>
+                    <dd data-testid="shipment-tracking-number">
+                      {shipment.trackingNumber ?? '—'}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>{t('orders.details.shipmentStatus')}</dt>
+                    <dd>
+                      <StatusBadge status={shipment.status} />
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>{t('orders.details.codAmount')}</dt>
+                    <dd data-testid="shipment-cod-amount">{formatEgpHtml(shipment.codAmount)}</dd>
+                  </div>
+                  <div>
+                    <dt>{t('orders.details.shippingCost')}</dt>
+                    <dd>{formatEgpHtml(shipment.shippingCost)}</dd>
+                  </div>
+                  <div>
+                    <dt>{t('orders.details.shipmentCreatedAt')}</dt>
+                    <dd>{formatDate(shipment.createdAt)}</dd>
+                  </div>
+                  <div>
+                    <dt>{t('orders.details.shipmentUpdatedAt')}</dt>
+                    <dd>{formatDate(shipment.updatedAt)}</dd>
+                  </div>
+                  {shipment.errorMessage ? (
+                    <div>
+                      <dt>{t('orders.details.shipmentError')}</dt>
+                      <dd>{shipment.errorMessage}</dd>
+                    </div>
+                  ) : null}
+                </dl>
+
+                {shipment.statusHistory.length > 0 ? (
+                  <div className="card__subtitle-row">
+                    <h3 className="card__subtitle">{t('orders.details.shipmentHistory')}</h3>
+                    <table className="table">
+                      <thead>
+                        <tr>
+                          <th>{t('orders.details.shipmentFrom')}</th>
+                          <th>{t('orders.details.shipmentTo')}</th>
+                          <th>{t('common.status')}</th>
+                          <th>{t('orders.details.shipmentSource')}</th>
+                          <th>{t('orders.details.shipmentAt')}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {shipment.statusHistory.map((entry) => (
+                          <tr key={entry.id}>
+                            <td data-label={t('orders.details.shipmentFrom')}>
+                              {entry.previousStatus ?? '—'}
+                            </td>
+                            <td data-label={t('orders.details.shipmentTo')}>{entry.newStatus}</td>
+                            <td data-label={t('common.status')}>
+                              {entry.providerStatus ?? '—'}
+                            </td>
+                            <td data-label={t('orders.details.shipmentSource')}>{entry.source}</td>
+                            <td data-label={t('orders.details.shipmentAt')}>
+                              {formatDate(entry.createdAt)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : null}
+
+                <div className="form-actions">
+                  <Button
+                    onClick={() => void refreshShipment()}
+                    loading={shippingAction}
+                    variant="secondary"
+                    data-testid="refresh-shipment"
+                  >
+                    {t('orders.details.refreshTracking')}
+                  </Button>
+                  <Button
+                    onClick={() => void cancelShipment()}
+                    loading={shippingAction}
+                    variant="danger"
+                    data-testid="cancel-shipment"
+                  >
+                    {t('orders.details.cancelShipment')}
+                  </Button>
+                  {shipment.printedLabelUrl ? (
+                    <a
+                      href={shipment.printedLabelUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="btn btn--outline btn--md"
+                      data-testid="print-label"
+                    >
+                      {t('orders.details.printLabel')}
+                    </a>
+                  ) : null}
+                </div>
+              </div>
             )}
           </Card>
         </div>
@@ -294,7 +492,23 @@ export default function OrderDetailsPage() {
                 <dd data-testid="order-detail-channel">
                   {order.channel === 'WHATSAPP'
                     ? t('orders.channel.WHATSAPP')
-                    : t('orders.channel.ONLINE_PAYMENT')}
+                    : order.paymentMethod === 'COD'
+                      ? t('orders.details.cashOnDelivery')
+                      : t('orders.channel.ONLINE_PAYMENT')}
+                </dd>
+              </div>
+              <div>
+                <dt>{t('orders.details.paymentMethod')}</dt>
+                <dd data-testid="order-detail-payment-method">
+                  {order.paymentMethod === 'COD'
+                    ? t('orders.details.cashOnDelivery')
+                    : t('orders.details.payOnline')}
+                </dd>
+              </div>
+              <div>
+                <dt>{t('orders.details.paymentStatus')}</dt>
+                <dd data-testid="order-detail-payment-status">
+                  <StatusBadge status={order.paymentStatus} />
                 </dd>
               </div>
               <div>
@@ -446,11 +660,15 @@ export default function OrderDetailsPage() {
                 <tbody>
                   {payment.attempts.map((attempt) => (
                     <tr key={attempt.id}>
-                      <td>
+                      <td data-label={t('common.status')}>
                         <StatusBadge status={attempt.status} />
                       </td>
-                      <td>{formatEgpHtml(attempt.amount)}</td>
-                      <td>{attempt.providerReference ?? '—'}</td>
+                      <td data-label={t('orders.details.paymentAmount')}>
+                        {formatEgpHtml(attempt.amount)}
+                      </td>
+                      <td data-label={t('orders.details.paymentReference')}>
+                        {attempt.providerReference ?? '—'}
+                      </td>
                     </tr>
                   ))}
                 </tbody>

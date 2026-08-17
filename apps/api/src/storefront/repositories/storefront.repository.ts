@@ -13,6 +13,15 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 
+/**
+ * Bounded first page of gallery images returned by the storefront product
+ * detail payload. The complete gallery is browsed through
+ * GET /storefront/products/:slug/media (paginated) — a 1000-image product
+ * never ships 1000 media rows in the detail response and the browser never
+ * renders 1000 thumbnails at once.
+ */
+export const STOREFRONT_GALLERY_PAGE_SIZE = 12;
+
 /** Store-scoped list filter for the storefront product collection. */
 export interface StorefrontProductListFilter {
   search?: string;
@@ -28,15 +37,28 @@ export interface StorefrontCategoryListFilter {
 
 /** A product row with only the ACTIVE variants + inventory + media loaded. */
 export type StorefrontProductWithRelations = Product & {
+  productCategories?: Array<{
+    category: { id: string; name: string; slug: string; description: string | null };
+  }>;
   variants: Array<{
     id: string;
     name: string;
+    attributes: unknown;
     price: bigint;
     status: VariantStatus;
     inventory: { onHandQuantity: number; reservedQuantity: number } | null;
   }>;
   productMedia: Array<{ media: { id: string; altText: string | null } }>;
 };
+
+/** A storefront gallery association row (media id + variant link + order). */
+export interface StorefrontMediaRow {
+  mediaId: string;
+  variantId: string | null;
+  altText: string | null;
+  sortOrder: number;
+  isPrimary: boolean;
+}
 
 /** A PUBLISHED page with its sections ordered by sort_order. */
 export type StorefrontPublishedPage = Page & { sections: PageSection[] };
@@ -73,7 +95,7 @@ export class StorefrontRepository {
       skip: filter.skip,
       take: filter.take,
       orderBy: { createdAt: 'desc' },
-      include: this.productInclude(),
+      include: this.productListInclude(),
     });
   }
 
@@ -87,7 +109,7 @@ export class StorefrontRepository {
   ): Promise<StorefrontProductWithRelations | null> {
     return this.prisma.product.findFirst({
       where: { storeId, slug, status: ProductStatus.ACTIVE },
-      include: this.productInclude(),
+      include: this.productDetailInclude(),
     });
   }
 
@@ -127,7 +149,7 @@ export class StorefrontRepository {
       skip: filter.skip,
       take: filter.take,
       orderBy: { createdAt: 'desc' },
-      include: this.productInclude(),
+      include: this.productListInclude(),
     });
   }
 
@@ -139,6 +161,53 @@ export class StorefrontRepository {
         productCategories: { some: { categoryId } },
       },
     });
+  }
+
+  /**
+   * Paginated storefront gallery for an ACTIVE product (Phase 26). Returns
+   * ordered associations (media id + variant link + order + primary flag).
+   * The product must be ACTIVE; the associations are store-scoped by the
+   * product's store. An optional `variantId` filter returns only the images
+   * linked to that variant.
+   */
+  async findActiveProductMedia(
+    storeId: string,
+    productId: string,
+    filter: { variantId?: string; skip: number; take: number },
+  ): Promise<StorefrontMediaRow[]> {
+    const where: Prisma.ProductMediaWhereInput = { storeId, productId, product: { status: ProductStatus.ACTIVE } };
+    if (filter.variantId) {
+      where.variantId = filter.variantId;
+    }
+    const rows = await this.prisma.productMedia.findMany({
+      where,
+      select: {
+        mediaId: true,
+        variantId: true,
+        altText: true,
+        sortOrder: true,
+        isPrimary: true,
+      },
+      skip: filter.skip,
+      take: filter.take,
+      orderBy: [{ sortOrder: 'asc' as const }, { createdAt: 'asc' as const }],
+    });
+    return rows.map((row) => ({
+      mediaId: row.mediaId,
+      variantId: row.variantId,
+      altText: row.altText,
+      sortOrder: row.sortOrder,
+      isPrimary: row.isPrimary,
+    }));
+  }
+
+  /** Total media count of an ACTIVE product (for gallery pagination). */
+  async countActiveProductMedia(storeId: string, productId: string, variantId?: string): Promise<number> {
+    const where: Prisma.ProductMediaWhereInput = { storeId, productId, product: { status: ProductStatus.ACTIVE } };
+    if (variantId) {
+      where.variantId = variantId;
+    }
+    return this.prisma.productMedia.count({ where });
   }
 
   /**
@@ -169,17 +238,73 @@ export class StorefrontRepository {
     return where;
   }
 
-  /** ACTIVE (purchasable) variants with inventory, plus ordered media. */
-  private productInclude() {
+  /**
+   * ACTIVE (purchasable) variants with inventory + the PRIMARY cover image
+   * only. Used by product LISTS (Phase 26 — a 1000-image product must never
+   * drag its whole gallery into every storefront list response).
+   */
+  private productListInclude() {
     return {
       variants: {
         where: { status: VariantStatus.ACTIVE },
-        include: { inventory: true },
+        select: {
+          id: true,
+          name: true,
+          attributes: true,
+          price: true,
+          status: true,
+          inventory: { select: { onHandQuantity: true, reservedQuantity: true } },
+        },
         orderBy: { createdAt: 'asc' as const },
       },
       productMedia: {
-        include: { media: true },
+        select: { media: { select: { id: true, altText: true } } },
+        orderBy: [{ isPrimary: 'desc' as const }, { sortOrder: 'asc' as const }],
+        take: 1,
+      },
+    };
+  }
+
+  /**
+   * Product DETAIL include: ACTIVE variants with inventory + attributes +
+   * ACTIVE categories + the FIRST page of the ordered gallery (bounded). The
+   * complete gallery is paginated through findActiveProductMedia.
+   */
+  private productDetailInclude() {
+    return {
+      productCategories: {
+        where: { category: { status: CategoryStatus.ACTIVE } },
+        select: {
+          category: { select: { id: true, name: true, slug: true, description: true } },
+        },
+        orderBy: { createdAt: 'asc' as const },
+      },
+      variants: {
+        where: { status: VariantStatus.ACTIVE },
+        select: {
+          id: true,
+          name: true,
+          attributes: true,
+          price: true,
+          status: true,
+          inventory: { select: { onHandQuantity: true, reservedQuantity: true } },
+        },
+        orderBy: { createdAt: 'asc' as const },
+      },
+      productMedia: {
+        select: {
+          media: { select: { id: true, altText: true } },
+          variantId: true,
+          isPrimary: true,
+          sortOrder: true,
+        },
         orderBy: { sortOrder: 'asc' as const },
+        take: STOREFRONT_GALLERY_PAGE_SIZE,
+      },
+      _count: {
+        select: {
+          productMedia: true,
+        },
       },
     };
   }

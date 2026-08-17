@@ -17,6 +17,27 @@ describe('order lifecycle (docs/DOMAIN-MODEL.md §12.3, docs/DATABASE.md §15.2)
     expect(() => assertOrderTransition(OrderStatus.CONFIRMED, OrderStatus.CANCELLED)).not.toThrow();
   });
 
+  it('allows RETURNED only from CONFIRMED, PROCESSING or SHIPPED (Phase 28 — F-10)', () => {
+    expect(() => assertOrderTransition(OrderStatus.CONFIRMED, OrderStatus.RETURNED)).not.toThrow();
+    expect(() => assertOrderTransition(OrderStatus.PROCESSING, OrderStatus.RETURNED)).not.toThrow();
+    expect(() => assertOrderTransition(OrderStatus.SHIPPED, OrderStatus.RETURNED)).not.toThrow();
+  });
+
+  it('rejects RETURNED from PENDING, DELIVERED or CANCELLED (terminal protection)', () => {
+    expect(() => assertOrderTransition(OrderStatus.PENDING, OrderStatus.RETURNED)).toThrow(
+      StateTransitionError,
+    );
+    expect(() => assertOrderTransition(OrderStatus.DELIVERED, OrderStatus.RETURNED)).toThrow(
+      StateTransitionError,
+    );
+    expect(() => assertOrderTransition(OrderStatus.CANCELLED, OrderStatus.RETURNED)).toThrow(
+      StateTransitionError,
+    );
+    expect(() => assertOrderTransition(OrderStatus.RETURNED, OrderStatus.RETURNED)).toThrow(
+      StateTransitionError,
+    );
+  });
+
   it('rejects forward-state skipping', () => {
     expect(() => assertOrderTransition(OrderStatus.PENDING, OrderStatus.PROCESSING)).toThrow(
       StateTransitionError,
@@ -93,6 +114,16 @@ describe('order lifecycle (docs/DOMAIN-MODEL.md §12.3, docs/DATABASE.md §15.2)
     expect(() => assertOrderTransition(OrderStatus.CANCELLED, OrderStatus.PROCESSING)).toThrow(
       StateTransitionError,
     );
+  });
+
+  it('transitionTimestamps sets returned_at only on -> RETURNED', () => {
+    const returned = transitionTimestamps(OrderStatus.RETURNED);
+    expect(returned.returnedAt).toBeInstanceOf(Date);
+    expect(returned.confirmedAt).toBeUndefined();
+    expect(returned.cancelledAt).toBeUndefined();
+
+    const shipped = transitionTimestamps(OrderStatus.SHIPPED);
+    expect(shipped.returnedAt).toBeUndefined();
   });
 
   it('transitionTimestamps sets confirmed_at only on -> CONFIRMED and cancelled_at only on -> CANCELLED', () => {

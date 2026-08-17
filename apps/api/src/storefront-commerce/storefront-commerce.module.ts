@@ -8,6 +8,7 @@ import { PaymentsModule } from '../payments/payments.module';
 import { StoreSettingsModule } from '../store-settings/store-settings.module';
 import { StorefrontModule } from '../storefront/storefront.module';
 import { WhatsappModule } from '../whatsapp/whatsapp.module';
+import { ShippingModule } from '../shipping/shipping.module';
 import { StorefrontCommerceController } from './controllers/storefront-commerce.controller';
 import { StorefrontCommerceService } from './services/storefront-commerce.service';
 
@@ -34,6 +35,7 @@ import { StorefrontCommerceService } from './services/storefront-commerce.servic
     WhatsappModule,
     CmsModule,
     MediaModule,
+    ShippingModule,
   ],
   controllers: [StorefrontCommerceController],
   providers: [StorefrontCommerceService],

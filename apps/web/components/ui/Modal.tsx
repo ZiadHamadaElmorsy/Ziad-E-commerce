@@ -1,13 +1,14 @@
 'use client';
 
-import { useEffect, type ReactNode } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import { useI18n } from '@/lib/i18n/i18n-context';
 import { Button } from './Button';
 import { Spinner } from './Spinner';
 
 /**
  * Accessible modal dialog. Renders through a portal-like overlay inside the
- * component tree and locks body scroll while open.
+ * component tree, locks body scroll while open, closes on Escape, and manages
+ * focus (moves it into the dialog on open and restores it on close).
  */
 export function Modal({
   open,
@@ -27,17 +28,23 @@ export function Modal({
   width?: 'sm' | 'md' | 'lg';
 }) {
   const { t } = useI18n();
+  const closeButtonRef = useRef<HTMLButtonElement | null>(null);
+  const previouslyFocusedRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     if (!open) return;
+    previouslyFocusedRef.current = document.activeElement as HTMLElement | null;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') onClose();
     };
     document.addEventListener('keydown', onKeyDown);
     document.body.classList.add('modal-open');
+    // Focus the dialog so keyboard/screen-reader users land inside it.
+    requestAnimationFrame(() => closeButtonRef.current?.focus());
     return () => {
       document.removeEventListener('keydown', onKeyDown);
       document.body.classList.remove('modal-open');
+      previouslyFocusedRef.current?.focus?.();
     };
   }, [open, onClose]);
 
@@ -56,6 +63,7 @@ export function Modal({
             {description ? <p className="modal__description">{description}</p> : null}
           </div>
           <button
+            ref={closeButtonRef}
             type="button"
             className="modal__close"
             aria-label={t('common.close')}

@@ -28,6 +28,7 @@ import { MediaModule } from './media/media.module';
 import { JobsModule } from './jobs/jobs.module';
 import { SubscriptionModule } from './subscription/subscription.module';
 import { DashboardModule } from './dashboard/dashboard.module';
+import { ShippingModule } from './shipping/shipping.module';
 
 @Module({
   imports: [
@@ -75,6 +76,8 @@ import { DashboardModule } from './dashboard/dashboard.module';
     MediaModule,
     // Phase 25 — aggregated dashboard metrics endpoint.
     DashboardModule,
+    // Phase 27 — carrier shipping (Bosta behind the ShippingProvider abstraction).
+    ShippingModule,
     // Phase 21 — periodic maintenance jobs (cart/reservation expiry sweep).
     JobsModule,
   ],

@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { Order, OrderChannel, OrderStatus, Prisma } from '@prisma/client';
+import { Order, OrderChannel, OrderPaymentStatus, OrderStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { OrderWithDetails } from '../orders.types';
 
@@ -87,12 +87,12 @@ export class OrderRepository {
   }
 
   /**
-   * Concurrency-safe lifecycle transition (docs/DATABASE.md §26.2/§28.4 —
+   * Concurrency-safe lifecycle transition (docs/DATABASE.md §26.2/§28.4 — the
    * guarded conditional UPDATE WHERE status = from). Only when the UPDATE
    * affects exactly one row is the transition applied; 0 means a concurrent
    * operation already moved the order (the caller fails closed with
-   * STATE_TRANSITION). `confirmed_at`/`cancelled_at` are written at the
-   * documented transitions (DATABASE §7.16).
+   * STATE_TRANSITION). `confirmed_at`/`cancelled_at`/`returned_at` are written
+   * at the documented transitions (DATABASE §7.16).
    */
   async transitionStatus(
     tx: Prisma.TransactionClient,
@@ -100,7 +100,7 @@ export class OrderRepository {
     orderId: string,
     from: OrderStatus,
     to: OrderStatus,
-    timestamps: { confirmedAt?: Date; cancelledAt?: Date },
+    timestamps: { confirmedAt?: Date; cancelledAt?: Date; returnedAt?: Date },
   ): Promise<{ count: number }> {
     return tx.order.updateMany({
       where: { id: orderId, storeId, status: from },
@@ -108,7 +108,33 @@ export class OrderRepository {
         status: to,
         ...(timestamps.confirmedAt ? { confirmedAt: timestamps.confirmedAt } : {}),
         ...(timestamps.cancelledAt ? { cancelledAt: timestamps.cancelledAt } : {}),
+        ...(timestamps.returnedAt ? { returnedAt: timestamps.returnedAt } : {}),
       },
+    });
+  }
+
+  /**
+   * Guarded order -> RETURNED transition (Phase 28 — F-10). The order may be in
+   * CONFIRMED / PROCESSING / SHIPPED when the carrier confirms the shipment is
+   * being returned; the guarded IN-update applies the terminal RETURNED state
+   * exactly once and writes `returned_at`. A 0 count means the order was
+   * already terminal (or still PENDING) — the caller skips idempotently.
+   */
+  async transitionToReturnedTx(
+    tx: Prisma.TransactionClient,
+    storeId: string,
+    orderId: string,
+    returnedAt: Date,
+  ): Promise<{ count: number }> {
+    return tx.order.updateMany({
+      where: {
+        id: orderId,
+        storeId,
+        status: {
+          in: [OrderStatus.CONFIRMED, OrderStatus.PROCESSING, OrderStatus.SHIPPED],
+        },
+      },
+      data: { status: OrderStatus.RETURNED, returnedAt },
     });
   }
 
@@ -128,6 +154,26 @@ export class OrderRepository {
     return tx.order.updateMany({
       where: { id: orderId, storeId, channel: from },
       data: { channel: to },
+    });
+  }
+
+  /**
+   * Concurrency-safe order-level payment status transition (Phase 27). Used by
+   * the shipment flow: a COD order becomes PAID only after the carrier confirms
+   * DELIVERED; a FAILED online payment marks the order FAILED. The guarded
+   * conditional UPDATE makes concurrent transitions safe (0 rows = already
+   * moved).
+   */
+  async transitionPaymentStatus(
+    tx: Prisma.TransactionClient,
+    storeId: string,
+    orderId: string,
+    from: OrderPaymentStatus,
+    to: OrderPaymentStatus,
+  ): Promise<{ count: number }> {
+    return tx.order.updateMany({
+      where: { id: orderId, storeId, paymentStatus: from },
+      data: { paymentStatus: to },
     });
   }
 

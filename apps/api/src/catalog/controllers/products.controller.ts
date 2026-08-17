@@ -8,6 +8,7 @@ import {
   Param,
   Patch,
   Post,
+  Put,
   Query,
 } from '@nestjs/common';
 import { ProductsService } from '../services/products.service';
@@ -17,6 +18,12 @@ import { CreateProductDto } from '../dto/create-product.dto';
 import { UpdateProductDto } from '../dto/update-product.dto';
 import { ListProductsQueryDto } from '../dto/list-products-query.dto';
 import { CreateVariantDto } from '../dto/create-variant.dto';
+import {
+  AttachProductMediaDto,
+  ListProductMediaQueryDto,
+  ReorderProductMediaDto,
+  UpdateProductMediaDto,
+} from '../dto/product-media.dto';
 
 /**
  * Product + nested Variant + nested Category-link API
@@ -53,6 +60,39 @@ export class ProductsController {
     return { data: categories };
   }
 
+  // --- Product gallery (Phase 26 — docs/API-SPEC.md §16 images) ---
+
+  /** GET /products/:productId/media — paginated gallery metadata. */
+  @Get(':productId/media')
+  async listGallery(
+    @Param('productId') productId: string,
+    @Query() query: ListProductMediaQueryDto,
+  ) {
+    const { items, meta } = await this.products.listGallery(productId, query);
+    return { data: items, meta };
+  }
+
+  /** PUT /products/:productId/media/order — batch reorder (drag & drop). */
+  @Put(':productId/media/order')
+  async reorderMedia(
+    @Param('productId') productId: string,
+    @Body() dto: ReorderProductMediaDto,
+  ) {
+    const product = await this.products.reorderMedia(productId, dto);
+    return { data: product };
+  }
+
+  /** PATCH /products/:productId/media/:mediaId — update one association. */
+  @Patch(':productId/media/:mediaId')
+  async updateMedia(
+    @Param('productId') productId: string,
+    @Param('mediaId') mediaId: string,
+    @Body() dto: UpdateProductMediaDto,
+  ) {
+    const product = await this.products.updateMediaLink(productId, mediaId, dto);
+    return { data: product };
+  }
+
   @Post()
   @HttpCode(HttpStatus.CREATED)
   async create(@Body() dto: CreateProductDto) {
@@ -68,8 +108,12 @@ export class ProductsController {
 
   @Post(':productId/media/:mediaId')
   @HttpCode(HttpStatus.CREATED)
-  async attachMedia(@Param('productId') productId: string, @Param('mediaId') mediaId: string) {
-    const product = await this.products.attachMedia(productId, mediaId);
+  async attachMedia(
+    @Param('productId') productId: string,
+    @Param('mediaId') mediaId: string,
+    @Body() dto?: AttachProductMediaDto,
+  ) {
+    const product = await this.products.attachMedia(productId, mediaId, dto);
     return { data: product };
   }
 

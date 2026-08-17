@@ -398,8 +398,18 @@ describe('Storefront (e2e)', () => {
         name: 'Classic T-Shirt',
         slug: 'classic-t-shirt',
         description: 'Cotton classic',
-        images: [{ id: 'media-1', altText: 'Front view' }],
-        variants: [{ id: 'variant-1', name: 'Black / Medium', price: 500, available: true }],
+        categories: [],
+        images: [{ id: 'media-1', altText: 'Front view', variantId: null, sortOrder: 0 }],
+        totalImages: 1,
+        variants: [
+          {
+            id: 'variant-1',
+            name: 'Black / Medium',
+            attributes: null,
+            price: 500,
+            available: true,
+          },
+        ],
       });
       // Internal fields must never leak.
       const serialized = JSON.stringify(res.body);
@@ -459,6 +469,7 @@ describe('Storefront (e2e)', () => {
       expect(res.body.data.variants[0]).toEqual({
         id: 'variant-1',
         name: 'Black / Medium',
+        attributes: null,
         price: 500,
         available: true,
       });

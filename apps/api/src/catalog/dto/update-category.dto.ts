@@ -14,6 +14,16 @@ export class UpdateCategoryDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(255)
+  nameAr?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  nameEn?: string | null;
+
+  @IsOptional()
+  @IsString()
   @MaxLength(10000)
   description?: string;
 }

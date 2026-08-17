@@ -1,11 +1,11 @@
 'use client';
 
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useI18n } from '@/lib/i18n/i18n-context';
 import { useStorefront } from '@/lib/storefront/storefront-context';
-import { storeOrderPath, storeProductsPath } from '@/lib/storefront/paths';
+import { storeOrderPath, storeOrderTrackingPath, storeProductsPath } from '@/lib/storefront/paths';
 import {
   checkoutStorefront,
   initiateStorefrontPayment,
@@ -64,11 +64,21 @@ export default function StoreCheckoutPage() {
   const [whatsappResult, setWhatsappResult] = useState<WhatsAppOrderResult | null>(null);
   const [whatsappSubmitting, setWhatsappSubmitting] = useState(false);
 
+  // Phase 27 — payment method selection (ONLINE | COD).
+  const [paymentMethod, setPaymentMethod] = useState<'ONLINE' | 'COD'>('ONLINE');
+
   const items = cart?.items ?? [];
 
   // Public payment availability from the resolved store config (Phase 22).
   const payOnline = store?.payments?.payOnline ?? false;
   const whatsapp = store?.payments?.whatsapp ?? null;
+
+  // When online payment is not configured for the store, default to COD so a
+  // hidden ONLINE radio never leaves the customer with no actionable option.
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setPaymentMethod((current) => (current === 'ONLINE' && !payOnline ? 'COD' : current));
+  }, [payOnline]);
 
   const buildInput = () => ({
     customer: {
@@ -83,6 +93,7 @@ export default function StoreCheckoutPage() {
       ...(building.trim() ? { building: building.trim() } : {}),
       ...(apartment.trim() ? { apartment: apartment.trim() } : {}),
     },
+    ...(paymentMethod === 'COD' ? { paymentMethod: 'COD' as const } : {}),
   });
 
   const validate = (): boolean => {
@@ -124,6 +135,12 @@ export default function StoreCheckoutPage() {
       await clearCart();
       clearGuestToken(slug);
       setOrder(created);
+
+      // Phase 27 — COD: the order is created UNPAID and the customer pays when
+      // the order arrives; no online payment is initiated (Part 6/12).
+      if (paymentMethod === 'COD') {
+        return;
+      }
 
       if (payOnline) {
         await initiatePayment(created.orderId);
@@ -203,6 +220,11 @@ export default function StoreCheckoutPage() {
 
   // --- Payment step (order exists) ------------------------------------------
   if (order) {
+    // Phase 27 — COD orders skip the online-payment step entirely and show a
+    // confirmation with the amount to pay on delivery (Part 12).
+    if (order.paymentMethod === 'COD') {
+      return <CodConfirmationStep slug={slug} order={order} />;
+    }
     return (
       <PaymentStep
         slug={slug}
@@ -320,8 +342,38 @@ export default function StoreCheckoutPage() {
           <fieldset className="sf-fieldset">
             <legend>{t('storefront.paymentMethods')}</legend>
             <p className="sf-muted">{t('storefront.paymentNote')}</p>
-            <div className="sf-payment-methods">
+
+            {/* Phase 27 (Part 6/12) — Pay Online vs Cash on Delivery. */}
+            <div className="sf-payment-choice" role="radiogroup" aria-label={t('storefront.paymentMethods')}>
               {payOnline ? (
+                <label className={`sf-payment-choice__option${paymentMethod === 'ONLINE' ? ' sf-payment-choice__option--selected' : ''}`}>
+                  <input
+                    type="radio"
+                    name="paymentMethod"
+                    value="ONLINE"
+                    checked={paymentMethod === 'ONLINE'}
+                    onChange={() => setPaymentMethod('ONLINE')}
+                  />
+                  <span className="sf-payment-choice__title">{t('storefront.payOnline')}</span>
+                  <span className="sf-payment-choice__desc">{t('storefront.payOnlineDesc')}</span>
+                </label>
+              ) : null}
+              <label className={`sf-payment-choice__option${paymentMethod === 'COD' ? ' sf-payment-choice__option--selected' : ''}`}>
+                <input
+                  type="radio"
+                  name="paymentMethod"
+                  value="COD"
+                  checked={paymentMethod === 'COD'}
+                  onChange={() => setPaymentMethod('COD')}
+                  data-testid="payment-method-cod"
+                />
+                <span className="sf-payment-choice__title">{t('storefront.cashOnDelivery')}</span>
+                <span className="sf-payment-choice__desc">{t('storefront.codDesc')}</span>
+              </label>
+            </div>
+
+            <div className="sf-payment-methods">
+              {paymentMethod === 'ONLINE' && payOnline ? (
                 <button
                   type="submit"
                   className="sf-btn sf-btn--primary sf-btn--lg"
@@ -329,6 +381,16 @@ export default function StoreCheckoutPage() {
                   data-testid="place-order"
                 >
                   {submitting ? t('common.saving') : t('storefront.payOnline')}
+                </button>
+              ) : null}
+              {paymentMethod === 'COD' ? (
+                <button
+                  type="submit"
+                  className="sf-btn sf-btn--primary sf-btn--lg"
+                  disabled={submitting}
+                  data-testid="place-order-cod"
+                >
+                  {submitting ? t('common.saving') : t('storefront.placeCodOrder')}
                 </button>
               ) : null}
               {whatsapp ? (
@@ -526,6 +588,70 @@ function PaymentStep({
       )}
 
       <div className="sf-payment__footer">
+        <button type="button" className="sf-btn sf-btn--outline" onClick={() => router.push(orderUrl)}>
+          {t('storefront.viewOrder')}
+        </button>
+        <Link href={storeProductsPath(slug)} className="sf-btn sf-btn--ghost">
+          {t('storefront.continueShopping')}
+        </Link>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Cash-on-delivery confirmation (Phase 27 — Part 12). Shown right after a COD
+ * order is created: the customer pays when the order arrives. The amount to
+ * pay on delivery equals the order grand total (the carrier collects it).
+ */
+function CodConfirmationStep({
+  slug,
+  order,
+}: {
+  slug: string;
+  order: CheckoutResult;
+}) {
+  const { t } = useI18n();
+  const router = useRouter();
+  const orderUrl = storeOrderPath(slug, order.orderId);
+  const trackingUrl = storeOrderTrackingPath(slug, order.orderId);
+
+  return (
+    <div className="sf-page sf-page--narrow">
+      <div className="sf-order-placed">
+        <div className="sf-order-placed__icon" aria-hidden="true">
+          ✓
+        </div>
+        <h1 data-testid="cod-confirmation">{t('storefront.orderConfirmed')}</h1>
+        <p className="sf-order-placed__number">
+          {t('storefront.orderNumberLabel')} <strong>{order.orderNumber}</strong>
+        </p>
+        <p className="sf-muted">{t('storefront.orderPlacedDesc')}</p>
+      </div>
+
+      <div className="sf-payment">
+        <h2>{t('storefront.payment')}</h2>
+        <dl className="sf-meta">
+          <div>
+            <dt>{t('storefront.paymentMethod')}</dt>
+            <dd data-testid="cod-payment-method">{t('storefront.cashOnDelivery')}</dd>
+          </div>
+          <div>
+            <dt>{t('storefront.amountToPayOnDelivery')}</dt>
+            <dd>
+              <strong data-testid="cod-amount">
+                <Price value={order.grandTotal} />
+              </strong>
+            </dd>
+          </div>
+        </dl>
+        <p className="sf-alert sf-alert--info">{t('storefront.codPayWhenArrives')}</p>
+      </div>
+
+      <div className="sf-payment__footer">
+        <Link href={trackingUrl} className="sf-btn sf-btn--primary">
+          {t('storefront.trackOrder')}
+        </Link>
         <button type="button" className="sf-btn sf-btn--outline" onClick={() => router.push(orderUrl)}>
           {t('storefront.viewOrder')}
         </button>

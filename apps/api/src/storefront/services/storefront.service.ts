@@ -7,6 +7,7 @@ import {
   StorefrontCategoryDetailView,
   StorefrontCategoryView,
   StorefrontPageView,
+  StorefrontProductMediaView,
   StorefrontProductView,
   StorefrontStoreView,
   toStorefrontCategoryView,
@@ -19,6 +20,7 @@ import { isWhatsAppAvailable } from '../../store-settings/domain/whatsapp-config
 import { StoreSettingsService } from '../../store-settings/services/store-settings.service';
 import { NotFoundError } from '../../common/errors/domain-exceptions';
 import { ListStorefrontCategoriesQueryDto } from '../dto/list-storefront-categories-query.dto';
+import { ListStorefrontProductMediaQueryDto } from '../dto/list-storefront-product-media-query.dto';
 import { ListStorefrontProductsQueryDto } from '../dto/list-storefront-products-query.dto';
 import { StorefrontRepository } from '../repositories/storefront.repository';
 import { StorefrontStoreResolver } from './storefront-store-resolver';
@@ -96,6 +98,40 @@ export class StorefrontService {
       throw new NotFoundError('The product was not found.');
     }
     return toStorefrontProductView(product);
+  }
+
+  /**
+   * GET /api/v1/storefront/products/:slug/media — paginated storefront
+   * gallery (Phase 26). The product must be ACTIVE; associations are
+   * store-scoped by the product's store. `variantId` filters to the images
+   * linked to a specific variant (with product-level images available through
+   * the unfiltered page).
+   */
+  async listProductMedia(
+    request: Pick<Request, 'headers'>,
+    slug: string,
+    query: ListStorefrontProductMediaQueryDto,
+  ): Promise<PaginatedView<StorefrontProductMediaView>> {
+    const store = await this.storeResolver.resolve(request);
+    const product = await this.storefrontRepository.findActiveProductBySlug(store.id, slug);
+    if (!product) {
+      throw new NotFoundError('The product was not found.');
+    }
+
+    const skip = (query.page - 1) * query.limit;
+    const [items, total] = await Promise.all([
+      this.storefrontRepository.findActiveProductMedia(store.id, product.id, {
+        variantId: query.variantId,
+        skip,
+        take: query.limit,
+      }),
+      this.storefrontRepository.countActiveProductMedia(store.id, product.id, query.variantId),
+    ]);
+
+    return {
+      items,
+      meta: buildPaginationMeta(query.page, query.limit, total),
+    };
   }
 
   /** GET /api/v1/storefront/categories — ACTIVE categories with pagination. */

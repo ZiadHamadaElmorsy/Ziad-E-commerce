@@ -46,6 +46,6 @@ import { PaymobPaymentProvider } from './providers/paymob/paymob-payment-provide
     PaymentEventRepository,
     { provide: PaymentProvider, useClass: PaymobPaymentProvider },
   ],
-  exports: [PaymentsService, PaymentProvider],
+  exports: [PaymentsService, PaymobWebhookService, PaymentEventRepository, PaymentProvider],
 })
 export class PaymentsModule {}

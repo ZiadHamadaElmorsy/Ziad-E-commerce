@@ -1,5 +1,6 @@
 import { NotFoundError } from '../../common/errors/domain-exceptions';
 import { ListStorefrontCategoriesQueryDto } from '../dto/list-storefront-categories-query.dto';
+import { ListStorefrontProductMediaQueryDto } from '../dto/list-storefront-product-media-query.dto';
 import { ListStorefrontProductsQueryDto } from '../dto/list-storefront-products-query.dto';
 import { StorefrontRepository } from '../repositories/storefront.repository';
 import { StorefrontStoreResolver } from './storefront-store-resolver';
@@ -19,6 +20,8 @@ describe('StorefrontService', () => {
     findActiveCategoryBySlug: jest.Mock;
     findActiveProductsByCategory: jest.Mock;
     countActiveProductsByCategory: jest.Mock;
+    findActiveProductMedia: jest.Mock;
+    countActiveProductMedia: jest.Mock;
     findPublishedPageBySlug: jest.Mock;
   };
   let service: StorefrontService;
@@ -72,6 +75,8 @@ describe('StorefrontService', () => {
       findActiveCategoryBySlug: jest.fn(),
       findActiveProductsByCategory: jest.fn(),
       countActiveProductsByCategory: jest.fn(),
+      findActiveProductMedia: jest.fn(),
+      countActiveProductMedia: jest.fn(),
       findPublishedPageBySlug: jest.fn(),
     };
     service = new StorefrontService(
@@ -127,8 +132,18 @@ describe('StorefrontService', () => {
           name: 'Classic T-Shirt',
           slug: 'classic-t-shirt',
           description: 'Cotton',
+          categories: [],
           images: [{ id: 'media-1', altText: 'Front' }],
-          variants: [{ id: 'variant-1', name: 'Black / Medium', price: 500, available: true }],
+          totalImages: 1,
+          variants: [
+            {
+              id: 'variant-1',
+              name: 'Black / Medium',
+              attributes: null,
+              price: 500,
+              available: true,
+            },
+          ],
         },
       ],
       meta: { page: 1, limit: 20, total: 1, totalPages: 1 },
@@ -171,6 +186,54 @@ describe('StorefrontService', () => {
     await expect(service.getProductBySlug({ headers: {} }, 'missing')).rejects.toThrow(
       NotFoundError,
     );
+  });
+
+  it('listProductMedia returns the paginated ACTIVE-product gallery', async () => {
+    storefrontRepository.findActiveProductBySlug.mockResolvedValue({ id: 'product-1' });
+    storefrontRepository.findActiveProductMedia.mockResolvedValue([
+      {
+        mediaId: 'media-1',
+        variantId: null,
+        altText: 'Front',
+        sortOrder: 0,
+        isPrimary: true,
+      },
+      {
+        mediaId: 'media-2',
+        variantId: 'variant-1',
+        altText: 'Black back',
+        sortOrder: 1,
+        isPrimary: false,
+      },
+    ]);
+    storefrontRepository.countActiveProductMedia.mockResolvedValue(2);
+
+    const query = new ListStorefrontProductMediaQueryDto();
+    query.page = 1;
+    query.limit = 12;
+
+    const result = await service.listProductMedia({ headers: {} }, 'classic-t-shirt', query);
+
+    expect(storefrontRepository.findActiveProductMedia).toHaveBeenCalledWith('store-1', 'product-1', {
+      variantId: undefined,
+      skip: 0,
+      take: 12,
+    });
+    expect(result).toEqual({
+      items: [
+        { mediaId: 'media-1', variantId: null, altText: 'Front', sortOrder: 0, isPrimary: true },
+        { mediaId: 'media-2', variantId: 'variant-1', altText: 'Black back', sortOrder: 1, isPrimary: false },
+      ],
+      meta: { page: 1, limit: 12, total: 2, totalPages: 1 },
+    });
+  });
+
+  it('listProductMedia fails closed with NOT_FOUND for a missing/unpublished product', async () => {
+    storefrontRepository.findActiveProductBySlug.mockResolvedValue(null);
+
+    await expect(
+      service.listProductMedia({ headers: {} }, 'draft', new ListStorefrontProductMediaQueryDto()),
+    ).rejects.toThrow(NotFoundError);
   });
 
   it('listCategories returns only ACTIVE categories with pagination', async () => {

@@ -107,6 +107,7 @@ enum OrderStatus {
   PROCESSING
   SHIPPED
   DELIVERED
+  RETURNED
   CANCELLED
 
   @@map("order_status")
@@ -122,6 +123,31 @@ enum OrderChannel {
   @@map("order_channel")
 }
 
+/// How the order's payment is settled (Phase 27 — Online vs Cash on Delivery).
+/// ONLINE = online card payment (Paymob); the order becomes PAID on webhook
+/// confirmation. COD = cash on delivery; the order stays UNPAID until the
+/// carrier confirms successful delivery/collection.
+enum OrderPaymentMethod {
+  ONLINE
+  COD
+
+  @@map("order_payment_method")
+}
+
+/// Order-level payment status — deliberately SEPARATE from the Order lifecycle
+/// (order.status) and from the carrier shipment status (shipments.status). A
+/// COD order is UNPAID when created and only becomes PAID after the carrier
+/// confirms delivery/collection; a rejected/failed/returned shipment stays
+/// UNPAID.
+enum OrderPaymentStatus {
+  PAID
+  UNPAID
+  FAILED
+  REFUNDED
+
+  @@map("order_payment_status")
+}
+
 enum PaymentStatus {
   PENDING
   PROCESSING
@@ -129,6 +155,33 @@ enum PaymentStatus {
   FAILED
 
   @@map("payment_status")
+}
+
+/// Shipment lifecycle (Phase 27) — the carrier delivery state machine, stored
+/// SEPARATELY from order.status and order payment state. `CANCELLED` is an
+/// internal merchant-cancellation terminal state (Part 10 "Cancel Shipment");
+/// the customer-facing mapper never exposes the raw carrier statuses.
+enum ShipmentStatus {
+  CREATED
+  HANDED_TO_COURIER
+  AT_DELIVERY_CENTER
+  OUT_FOR_DELIVERY
+  DELIVERED
+  REJECTED
+  DELIVERY_FAILED
+  RETURNED
+  CANCELLED
+
+  @@map("shipment_status")
+}
+
+/// Shipping provider registry (Phase 27). The Orders domain depends ONLY on the
+/// ShippingProvider abstraction — never on this concrete provider. J&T or any
+/// future carrier is added by registering a new value here + a new adapter.
+enum ShippingProvider {
+  BOSTA
+
+  @@map("shipping_provider")
 }
 
 enum CartStatus {
@@ -154,6 +207,7 @@ enum MovementType {
   RESERVATION
   CONSUMPTION
   RELEASE
+  RETURN
 
   @@map("movement_type")
 }
@@ -229,6 +283,8 @@ model Store {
   themeConfigurations   ThemeConfiguration?
   media                 Media[]
   productMedia          ProductMedia[]
+  shipments             Shipment[]
+  shipmentStatusHistory ShipmentStatusHistory[]
   storeSettings         StoreSettings?
   auditLogs             AuditLog[]
 
@@ -285,6 +341,10 @@ model Product {
   id          String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   storeId     String        @map("store_id") @db.Uuid
   name        String
+  /// Optional Arabic merchant-facing name (multilingual catalog labels).
+  nameAr      String?       @map("name_ar")
+  /// Optional English merchant-facing name (multilingual catalog labels).
+  nameEn      String?       @map("name_en")
   slug        String
   description String?
   status      ProductStatus @default(DRAFT)
@@ -312,6 +372,10 @@ model ProductVariant {
   storeId        String        @map("store_id") @db.Uuid
   productId      String        @map("product_id") @db.Uuid
   name           String
+  /// Structured variant attributes (e.g. { color: "Black", size: "M" }).
+  /// String keys + string values only; used by the storefront color/size
+  /// selectors. Optional — legacy variants keep `name` only.
+  attributes     Json?
   sku            String?
   price          BigInt        @db.BigInt
   compareAtPrice BigInt?       @map("compare_at_price") @db.BigInt
@@ -342,6 +406,10 @@ model Category {
   id          String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   storeId     String         @map("store_id") @db.Uuid
   name        String
+  /// Optional Arabic category label (multilingual catalog labels).
+  nameAr      String?        @map("name_ar")
+  /// Optional English category label (multilingual catalog labels).
+  nameEn      String?        @map("name_en")
   slug        String
   description String?
   status      CategoryStatus @default(ACTIVE)
@@ -563,15 +631,23 @@ model CartItem {
 // 5. COMMERCE - ORDER
 // ---------------------------------------------------------------------------
 
-/// A completed checkout order. NO payment_status column - order status and
-/// payment status are separate state machines (DATABASE.md section 15.6).
+/// A completed checkout order. Order lifecycle (order.status) and payment state
+/// (order.payment_status) and carrier state (shipments.status) are THREE
+/// SEPARATE state machines (DATABASE.md §15.6, Phase 27).
 model Order {
-  id                      String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  storeId                 String       @map("store_id") @db.Uuid
-  orderNumber             String       @map("order_number")
-  channel                 OrderChannel @default(ONLINE_PAYMENT) @map("channel")
-  customerId              String?      @map("customer_id") @db.Uuid
-  status                  OrderStatus @default(PENDING)
+  id                      String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  storeId                 String             @map("store_id") @db.Uuid
+  orderNumber             String             @map("order_number")
+  channel                 OrderChannel       @default(ONLINE_PAYMENT) @map("channel")
+  /// How this order's payment is settled (ONLINE | COD). Defaults to ONLINE so
+  /// legacy/WhatsApp orders keep working unchanged.
+  paymentMethod           OrderPaymentMethod @default(ONLINE) @map("payment_method")
+  /// Order-level payment status (PAID/UNPAID/FAILED/REFUNDED). Online orders
+  /// become PAID on Paymob webhook confirmation; COD orders become PAID only
+  /// after the carrier confirms DELIVERED.
+  paymentStatus           OrderPaymentStatus @default(UNPAID) @map("payment_status")
+  customerId              String?            @map("customer_id") @db.Uuid
+  status                  OrderStatus        @default(PENDING)
   currency                String      @db.Char(3)
   subtotal                BigInt      @db.BigInt
   discountTotal           BigInt      @default(0) @map("discount_total") @db.BigInt
@@ -593,12 +669,14 @@ model Order {
   updatedAt               DateTime    @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
   confirmedAt             DateTime?   @map("confirmed_at") @db.Timestamptz
   cancelledAt             DateTime?   @map("cancelled_at") @db.Timestamptz
+  returnedAt              DateTime?   @map("returned_at") @db.Timestamptz
 
   store        Store                  @relation(fields: [storeId], references: [id], onDelete: Restrict)
   customer     Customer?              @relation(fields: [customerId], references: [id], onDelete: SetNull)
   items        OrderItem[]
   payments     Payment[]
   reservations InventoryReservation[]
+  shipments    Shipment[]
 
   // Composite-FK target (store_id, id) per DATABASE.md section 9.1.
   // Partial unique (store_id, idempotency_key) WHERE idempotency_key
@@ -611,6 +689,87 @@ model Order {
   @@index([storeId, status])
   @@index([storeId, customerId])
   @@map("orders")
+}
+
+// ---------------------------------------------------------------------------
+// Phase 27 — SHIPPING (carrier integration behind the ShippingProvider
+// abstraction). Shipment state is a SEPARATE state machine from the order
+// lifecycle and the payment state.
+// ---------------------------------------------------------------------------
+
+/// A carrier shipment created for a fulfilled order (Phase 27).
+///
+/// - `@@unique([storeId, orderId])` makes shipment creation idempotent at the
+///   database level: one shipment per order per store. A repeated merchant
+///   "Create Shipment" call returns the existing row instead of duplicating.
+/// - `@@unique([provider, providerShipmentId])` prevents the same provider
+///   shipment from being stored twice across stores (webhook dedup defense).
+/// - `lastProviderStatus`/`rawProviderData` are INTERNAL (raw carrier statuses
+///   and payloads) and are never exposed to the customer; the customer-facing
+///   view maps `status` through the customer-friendly status mapper.
+/// - Money (codAmount/shippingCost) is BIGINT integer minor units.
+model Shipment {
+  id                 String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  storeId            String          @map("store_id") @db.Uuid
+  orderId            String          @map("order_id") @db.Uuid
+  provider           ShippingProvider
+  providerShipmentId String?         @map("provider_shipment_id")
+  trackingNumber     String?         @map("tracking_number")
+  status             ShipmentStatus  @default(CREATED)
+  /// Amount the carrier must collect on delivery (COD). Zero for pre-paid orders.
+  codAmount          BigInt          @map("cod_amount") @db.BigInt
+  shippingCost       BigInt          @default(0) @map("shipping_cost") @db.BigInt
+  /// Raw provider status string — stored internally, NEVER exposed to customers.
+  lastProviderStatus String?         @map("last_provider_status")
+  /// Raw provider payload (webhook body / refresh snapshot) — internal only.
+  rawProviderData    Json?           @map("raw_provider_data")
+  /// Operational (merchant-facing) error message, sanitized — never provider
+  /// credentials or raw bodies.
+  errorMessage       String?         @map("error_message")
+  /// Merchant-facing shipping label URL from the provider (internal; not shown
+  /// to customers).
+  printedLabelUrl    String?         @map("printed_label_url")
+  /// When the returned/rejected stock was restored to inventory (exactly-once
+  /// restock guard — NULL until a terminal failure state restocks; Phase 28).
+  restockedAt        DateTime?       @map("restocked_at") @db.Timestamptz
+  createdAt          DateTime        @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt          DateTime        @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  deliveredAt        DateTime?       @map("delivered_at") @db.Timestamptz
+
+  store        Store                  @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  order        Order                  @relation(fields: [storeId, orderId], references: [storeId, id], onDelete: Restrict)
+  statusHistory ShipmentStatusHistory[]
+
+  @@unique([storeId, orderId])
+  @@unique([provider, providerShipmentId])
+  @@index([storeId, status])
+  @@index([storeId, createdAt])
+  @@map("shipments")
+}
+
+/// Append-only carrier status history for a shipment (Phase 27). Each row
+/// records a status change with the previous/new internal status, the raw
+/// provider status, the source (MERCHANT | WEBHOOK | SYSTEM) and the provider
+/// event id when available. Immutable; never updated in place.
+model ShipmentStatusHistory {
+  id             String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  storeId        String          @map("store_id") @db.Uuid
+  shipmentId     String          @map("shipment_id") @db.Uuid
+  previousStatus ShipmentStatus? @map("previous_status")
+  newStatus      ShipmentStatus  @map("new_status")
+  providerStatus String?         @map("provider_status")
+  source         String
+  providerEventId String?        @map("provider_event_id")
+  createdAt      DateTime        @default(now()) @map("created_at") @db.Timestamptz
+
+  store    Store    @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  shipment Shipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+
+  /// Webhook dedup defense — a provider event id can be recorded once per
+  /// shipment (idempotent webhook processing).
+  @@unique([shipmentId, providerEventId])
+  @@index([shipmentId, createdAt])
+  @@map("shipment_status_history")
 }
 
 /// Purchased variant with purchase-time snapshots (historical integrity).
@@ -831,6 +990,10 @@ model ProductMedia {
   variantId String?  @map("variant_id") @db.Uuid
   altText   String?  @map("alt_text")
   sortOrder Int      @default(0) @map("sort_order")
+  /// Primary/cover image flag. At most one PRIMARY per product is enforced by
+  /// the service (guarded UPDATE); the DB keeps a plain boolean so concurrent
+  /// primary swaps never deadlock on a partial unique index.
+  isPrimary Boolean  @default(false) @map("is_primary")
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
 
   store   Store           @relation(fields: [storeId], references: [id], onDelete: Restrict)

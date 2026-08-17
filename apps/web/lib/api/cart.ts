@@ -4,6 +4,7 @@ import type {
   CartView,
   CheckoutInput,
   CheckoutResult,
+  CustomerTrackingView,
   Envelope,
   PaymentView,
   StorefrontOrderView,
@@ -145,7 +146,6 @@ export async function checkoutStorefront(
     idempotencyKey,
   });
 }
-
 export interface WhatsAppOrderInput extends CheckoutInput {
   orderId?: string;
   lang?: 'en' | 'ar';
@@ -200,3 +200,19 @@ export async function getStorefrontOrder(
   );
 }
 
+/**
+ * GET /storefront/orders/:orderId/tracking (Phase 27 — Part 13).
+ * Customer delivery tracking — ONE aggregated payload (order number, payment
+ * method/amount, customer-safe tracking number, timeline). The response never
+ * contains the shipping provider, provider ids, raw statuses or internal ids.
+ */
+export async function getStorefrontOrderTracking(
+  slug: string,
+  orderId: string,
+): Promise<CustomerTrackingView> {
+  return commerceRequest<CustomerTrackingView>(
+    slug,
+    `/storefront/orders/${encodeURIComponent(orderId)}/tracking`,
+    { method: 'GET' },
+  );
+}

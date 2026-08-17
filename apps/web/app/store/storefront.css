@@ -652,6 +652,135 @@
   font-weight: 600;
 }
 
+/* --- Storefront gallery (Phase 26) --------------------------------------- */
+.sf-gallery {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.sf-gallery__main {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  border-radius: 0.75rem;
+  overflow: hidden;
+  background: #f3f4f6;
+}
+
+.sf-gallery__image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.sf-gallery__nav {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 2;
+  width: 2.5rem;
+  height: 2.5rem;
+  border: none;
+  border-radius: 9999px;
+  background: rgba(17, 24, 39, 0.55);
+  color: #fff;
+  font-size: 1.25rem;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s ease;
+}
+
+.sf-gallery__nav:hover {
+  background: rgba(17, 24, 39, 0.8);
+}
+
+.sf-gallery__nav--prev {
+  inset-inline-start: 0.75rem;
+}
+
+.sf-gallery__nav--next {
+  inset-inline-end: 0.75rem;
+}
+
+.sf-gallery__thumbs {
+  display: flex;
+  gap: 0.625rem;
+  overflow-x: auto;
+  padding-bottom: 0.25rem;
+  scrollbar-width: thin;
+}
+
+.sf-gallery__thumb {
+  flex: 0 0 auto;
+  width: 4.5rem;
+  height: 4.5rem;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 0.5rem;
+  overflow: hidden;
+  background: #f3f4f6;
+  cursor: pointer;
+}
+
+.sf-gallery__thumb--active {
+  border-color: var(--sf-primary);
+}
+
+.sf-gallery__thumb-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.sf-gallery__sentinel {
+  flex: 0 0 1px;
+  height: 1px;
+}
+
+.sf-gallery__more {
+  align-self: center;
+}
+
+.sf-pdp__gallery-empty {
+  color: #6b7280;
+  padding: 1rem 0;
+}
+
+/* Storefront color/size option buttons */
+.sf-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.sf-option {
+  padding: 0.5rem 1rem;
+  border: 1px solid #e5e7eb;
+  border-radius: 9999px;
+  background: #fff;
+  color: #111827;
+  font-weight: 600;
+  font-size: 0.875rem;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.sf-option--selected {
+  border-color: var(--sf-primary);
+  background: var(--sf-primary-soft);
+}
+
+.sf-option--disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+
 .sf-alert {
   padding: 0.75rem 1rem;
   border-radius: 0.5rem;
@@ -979,6 +1108,89 @@
 .sf-paymob-fallback {
   display: flex;
   flex-direction: column;
+
+/* Phase 27 — payment method choice (Pay Online / Cash on Delivery) */
+.sf-payment-choice {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-top: 0.5rem;
+}
+
+.sf-payment-choice__option {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid #e5e7eb;
+  border-radius: 0.75rem;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.sf-payment-choice__option input {
+  accent-color: var(--sf-primary);
+}
+
+.sf-payment-choice__option--selected {
+  border-color: var(--sf-primary);
+  background-color: var(--sf-primary-soft);
+}
+
+.sf-payment-choice__title {
+  font-weight: 600;
+}
+
+.sf-payment-choice__desc {
+  color: #6b7280;
+  font-size: 0.875rem;
+}
+
+/* Phase 27 — customer delivery timeline */
+.sf-tracking__title {
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin-bottom: 1rem;
+}
+
+.sf-tracking__headline {
+  font-weight: 600;
+  font-size: 1.05rem;
+  margin: 0.25rem 0 0.75rem;
+}
+
+.sf-timeline {
+  list-style: none;
+  margin: 1rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.sf-timeline__step {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  color: #9ca3af;
+}
+
+.sf-timeline__step--done {
+  color: #15803d;
+}
+
+.sf-timeline__step--current {
+  color: var(--sf-primary);
+  font-weight: 600;
+}
+
+.sf-timeline__marker {
+  font-size: 1.1rem;
+  line-height: 1.4;
+  min-width: 1.1rem;
+  text-align: center;
+}
+
   gap: 0.75rem;
   border: 1px solid #fbbf24;
   background: #fffbeb;
@@ -1145,3 +1357,118 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* ============================================================
+   Phase 27 — storefront responsive polish
+   ============================================================ */
+
+/* Product grid: 2 columns on phones, auto-fill on larger screens. */
+@media (max-width: 640px) {
+  .sf-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.875rem;
+  }
+
+  .sf-product-card__body {
+    padding: 0.625rem 0.75rem;
+  }
+}
+
+@media (max-width: 360px) {
+  .sf-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Cart item actions on small screens: quantity + line total + remove stack in
+   a second row instead of squeezing four columns into 320px. */
+@media (max-width: 560px) {
+  .sf-cart-item {
+    grid-template-columns: 1fr auto;
+    gap: 0.75rem;
+  }
+
+  .sf-cart-item__qty {
+    order: 3;
+  }
+
+  .sf-cart-item__line {
+    order: 2;
+    justify-self: end;
+  }
+
+  .sf-cart-item__remove {
+    order: 4;
+    justify-self: end;
+  }
+
+  .sf-cart-item__main {
+    grid-column: 1 / -1;
+  }
+
+  .sf-cart-item__qty button {
+    min-width: 2.5rem;
+    min-height: 2.5rem;
+  }
+
+  .sf-cart-item__remove {
+    min-width: 2.5rem;
+    min-height: 2.5rem;
+    font-size: 1.125rem;
+  }
+}
+
+/* PDP buy row: stack quantity and add-to-cart on small screens so both stay
+   full-width and comfortably tappable. */
+@media (max-width: 560px) {
+  .sf-pdp__buy {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.75rem;
+  }
+
+  .sf-pdp__buy .sf-btn {
+    width: 100%;
+    min-height: 2.75rem;
+  }
+
+  .sf-qty input {
+    width: 100%;
+    min-height: 2.5rem;
+  }
+
+  .sf-option {
+    min-height: 2.75rem;
+    padding-inline: 1.25rem;
+  }
+}
+
+/* Small-screen header: hide the long WhatsApp text (keep the icon), and keep
+   the brand name truncated. */
+@media (max-width: 640px) {
+  .sf-brand__name {
+    max-width: 8rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .sf-whatsapp-cta span:last-child {
+    display: none;
+  }
+
+  .sf-header__inner {
+    gap: 0.625rem;
+  }
+
+  .sf-nav-toggle {
+    min-width: 2.75rem;
+    min-height: 2.75rem;
+  }
+
+  .sf-cart-link {
+    min-height: 2.75rem;
+    padding-inline: 0.75rem;
+  }
+}
+

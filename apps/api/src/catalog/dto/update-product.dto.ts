@@ -6,8 +6,7 @@ import { IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
  *
  * Only the merchant-editable basic fields are accepted. `status` is NOT part
  * of the update request: lifecycle changes go exclusively through the
- * dedicated publish / unpublish / archive endpoints. `slug` is stable and
- * never mutated by an edit (changing it would break SEO URLs).
+ * dedicated publish / unpublish / archive endpoints. `slug` is stable.
  */
 export class UpdateProductDto {
   @IsOptional()
@@ -15,6 +14,16 @@ export class UpdateProductDto {
   @IsNotEmpty()
   @MaxLength(255)
   name?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  nameAr?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  nameEn?: string | null;
 
   @IsOptional()
   @IsString()

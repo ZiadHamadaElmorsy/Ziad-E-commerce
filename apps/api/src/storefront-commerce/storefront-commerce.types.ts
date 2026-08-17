@@ -1,4 +1,4 @@
-import { PaymentStatus } from '@prisma/client';
+import { OrderPaymentStatus, PaymentStatus } from '@prisma/client';
 import { toOrderView, OrderView } from '../orders/orders.types';
 
 /**
@@ -29,8 +29,14 @@ import { toOrderView, OrderView } from '../orders/orders.types';
  * only the payment lifecycle state (webhook-driven).
  */
 export interface StorefrontOrderView extends OrderView {
-  /** Latest payment status for the order, or null when no payment exists yet. */
-  paymentStatus: PaymentStatus | null;
+  /**
+   * Order-level payment status (Phase 27) — the authoritative customer-facing
+   * payment state (PAID/UNPAID/FAILED/REFUNDED), kept SEPARATE from the
+   * order lifecycle and the carrier shipment status. For online orders it is
+   * driven by the Paymob webhook; for COD orders it becomes PAID only after
+   * the carrier confirms delivery.
+   */
+  paymentStatus: OrderPaymentStatus;
   paymentFailureMessage: string | null;
 }
 
@@ -47,7 +53,11 @@ export function toStorefrontOrderView(
 ): StorefrontOrderView {
   const full = toOrderView(order);
   if (authorized) {
-    return { ...full, paymentStatus: payment?.status ?? null, paymentFailureMessage: payment?.failureMessage ?? null };
+    return {
+      ...full,
+      paymentStatus: order.paymentStatus,
+      paymentFailureMessage: payment?.failureMessage ?? null,
+    };
   }
   // PII-limited view: everything except the customer's identifying data. The
   // empty address object keeps the confirmation page rendering-safe.
@@ -58,7 +68,7 @@ export function toStorefrontOrderView(
     customerPhone: null,
     shippingAddress: {},
     billingAddress: null,
-    paymentStatus: payment?.status ?? null,
+    paymentStatus: order.paymentStatus,
     paymentFailureMessage: payment?.failureMessage ?? null,
   };
 }

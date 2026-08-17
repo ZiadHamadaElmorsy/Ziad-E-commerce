@@ -60,6 +60,9 @@ export function validate(config: Record<string, unknown>): Record<string, unknow
     'AUTH_VERIFY_CACHE_TTL_MS',
     'TENANT_RESOLUTION_CACHE_TTL_MS',
     'STOREFRONT_RESOLUTION_CACHE_TTL_MS',
+    'PAYMENT_RETRY_INTERVAL_MS',
+    'PAYMENT_RETRY_BATCH_SIZE',
+    'PAYMENT_RETRY_LEASE_TTL_MS',
   ] as const;
 
   for (const name of positiveIntVars) {

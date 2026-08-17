@@ -2,6 +2,13 @@ import { Injectable } from '@nestjs/common';
 import { Media, Prisma, Product, ProductStatus, ProductVariant } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 
+/**
+ * Bounded first page of product images returned by the merchant product detail
+ * view. The complete gallery is browsed through GET /products/:id/media
+ * (paginated) — the detail payload never carries 1000 media rows.
+ */
+export const GALLERY_DETAIL_PAGE_SIZE = 24;
+
 /** A product_media row with its media metadata (product images). */
 export type ProductMediaWithMedia = {
   media: Pick<Media, 'id' | 'altText'>;
@@ -17,6 +24,8 @@ export type ProductWithVariants = Product & {
 export interface CreateProductInput {
   storeId: string;
   name: string;
+  nameAr?: string | null;
+  nameEn?: string | null;
   slug: string;
   description?: string;
   status: ProductStatus;
@@ -25,6 +34,8 @@ export interface CreateProductInput {
 /** Minimal write input for updating a Product. */
 export interface UpdateProductInput {
   name?: string;
+  nameAr?: string | null;
+  nameEn?: string | null;
   description?: string;
 }
 
@@ -156,27 +167,36 @@ export class ProductRepository {
     return counts;
   }
 
-  /** Variants (ascending) + ordered product images used by every product view. */
+  /** Variants (ascending) + ordered product images used by the product detail view. */
   private productInclude() {
     return {
       variants: { orderBy: { createdAt: 'asc' as const } },
       productMedia: {
         include: { media: true },
         orderBy: { sortOrder: 'asc' as const },
+        // Phase 26 — bounded first page: the merchant gallery is fully browsed
+        // through GET /products/:id/media (paginated), so the detail view never
+        // drags 1000 media rows into one response.
+        take: GALLERY_DETAIL_PAGE_SIZE,
       },
     };
   }
 
   /**
    * Lean list include (Phase 25 — payload/query audit). Collection endpoints
-   * fetch variants (price display) but NOT the product_media -> media join:
-   * the list only renders names, statuses and prices. Full media is loaded by
-   * the product detail path (findById with includeVariants=true) and by the
-   * storefront (which needs thumbnails).
+   * fetch variants (price display) and the PRIMARY cover image only
+   * (Phase 26 — never the whole gallery): the list renders name/status/price
+   * plus one thumbnail; full media is browsed via the product detail path.
    */
   private productListInclude() {
     return {
       variants: { orderBy: { createdAt: 'asc' as const } },
+      productMedia: {
+        include: { media: true },
+        // Primary cover first, then lowest sort_order — at most ONE row.
+        orderBy: [{ isPrimary: 'desc' as const }, { sortOrder: 'asc' as const }],
+        take: 1,
+      },
     };
   }
 

@@ -44,6 +44,11 @@ export function storeOrderPath(slug: string, orderId: string): string {
   return `/store/${slug}/orders/${orderId}`;
 }
 
+/** Customer delivery tracking page (Phase 27 — Part 13). */
+export function storeOrderTrackingPath(slug: string, orderId: string): string {
+  return `/store/${slug}/orders/${orderId}/tracking`;
+}
+
 /**
  * Maps a CMS navigation item ({label, type, value}) to a storefront route.
  * PAGE -> store page, CATEGORY -> category page, DESTINATION -> known

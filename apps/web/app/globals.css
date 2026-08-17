@@ -45,6 +45,49 @@
 
   --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+
+  /* --- Spacing scale (Phase 27) ------------------------------------------- */
+  /* Use these tokens instead of ad-hoc pixel values so every surface shares a
+     rhythm. */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-7: 1.75rem;
+  --space-8: 2rem;
+  --space-10: 2.5rem;
+  --space-12: 3rem;
+  --space-16: 4rem;
+
+  /* --- Typography scale (Phase 27) ----------------------------------------- */
+  --text-xs: 0.75rem;
+  --text-sm: 0.8125rem;
+  --text-base: 0.9375rem;
+  --text-md: 1rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.25rem;
+  --text-2xl: 1.5rem;
+  --text-3xl: 1.875rem;
+
+  /* --- Status colors (Phase 27) ------------------------------------------- */
+  /* Solid + soft pairs keep status badges/alerts consistent everywhere. */
+  --color-success: #0d7a4a;
+  --color-success-hover: #0a623c;
+  --color-success-soft: #e6f6ee;
+  --color-warning: #b07d00;
+  --color-warning-hover: #8f6500;
+  --color-error: #d82c0d;
+  --color-error-hover: #b52102;
+  --color-error-soft: #fdeeea;
+  --color-info: #1a56db;
+  --color-info-hover: #12409f;
+  --color-neutral: #6d7175;
+  --color-neutral-soft: #f0f1f2;
+
+  /* Comfortable minimum touch target for interactive controls (≈44px). */
+  --touch-target: 2.75rem;
 }
 
 * {
@@ -90,6 +133,23 @@ code {
 
 button {
   font-family: inherit;
+}
+
+/* Global keyboard focus treatment (Phase 27). Interactive elements that do not
+   define their own focus-visible style still get a visible, accessible ring. */
+:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+a:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+::selection {
+  background: var(--color-primary-soft);
 }
 
 .link {
@@ -273,6 +333,13 @@ button {
   cursor: pointer;
 }
 
+/* Mirror the chevron and padding in RTL (Phase 27). */
+[dir='rtl'] .input--select {
+  background-position: left 0.75rem center;
+  padding-right: 0.75rem;
+  padding-left: 2rem;
+}
+
 .field {
   display: flex;
   flex-direction: column;
@@ -292,6 +359,12 @@ button {
 .field__error {
   font-size: 0.8125rem;
   color: var(--color-danger);
+}
+
+.form-hint {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
 }
 
 /* Password visibility toggle (registration form). Logical properties keep
@@ -474,7 +547,7 @@ button {
 }
 
 .table th {
-  text-align: left;
+  text-align: start;
   font-size: 0.75rem;
   font-weight: 600;
   text-transform: uppercase;
@@ -512,7 +585,7 @@ button {
 }
 
 .table__actions-head {
-  text-align: right;
+  text-align: end;
 }
 
 .table-empty {
@@ -818,7 +891,7 @@ button {
 
 .user-menu__dropdown {
   position: absolute;
-  right: 0;
+  inset-inline-end: 0;
   top: calc(100% + 0.5rem);
   width: 19rem;
   background: var(--color-surface);
@@ -1037,7 +1110,7 @@ button {
 .toast-stack {
   position: fixed;
   top: 1rem;
-  right: 1rem;
+  inset-inline-end: 1rem;
   display: flex;
   flex-direction: column;
   gap: 0.625rem;
@@ -1051,7 +1124,7 @@ button {
   gap: 0.625rem;
   background: var(--color-surface);
   border: 1px solid var(--color-border);
-  border-left-width: 3px;
+  border-inline-start-width: 3px;
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-md);
   padding: 0.75rem 0.875rem;
@@ -1070,16 +1143,31 @@ button {
   }
 }
 
+[dir='rtl'] .toast {
+  animation-name: toast-in-rtl;
+}
+
+@keyframes toast-in-rtl {
+  from {
+    opacity: 0;
+    transform: translateX(-12px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
 .toast--success {
-  border-left-color: var(--color-primary);
+  border-inline-start-color: var(--color-primary);
 }
 
 .toast--error {
-  border-left-color: var(--color-danger);
+  border-inline-start-color: var(--color-danger);
 }
 
 .toast--info {
-  border-left-color: var(--color-info-text);
+  border-inline-start-color: var(--color-info-text);
 }
 
 .toast__icon {
@@ -1252,7 +1340,7 @@ button {
 
 .meta-list dd {
   font-weight: 600;
-  text-align: right;
+  text-align: end;
   word-break: break-word;
 }
 
@@ -1268,7 +1356,7 @@ button {
 }
 
 .meta-list--grid dd {
-  text-align: left;
+  text-align: start;
 }
 
 .category-chip-list {
@@ -1461,20 +1549,29 @@ button {
   }
 }
 
-@media (max-width: 768px) {
+/* Phase 27 — the sidebar becomes a slide-out drawer on tablet AND mobile
+   (<= 1024px). Tablets get a collapsible rail instead of a permanent 248px
+   column, matching the responsive navigation requirements. */
+@media (max-width: 1024px) {
   .sidebar {
     position: fixed;
-    left: 0;
+    inset-inline-start: 0;
     top: 0;
     bottom: 0;
     z-index: 60;
     transform: translateX(-100%);
     transition: transform 180ms ease;
     box-shadow: var(--shadow-lg);
+    width: 16.5rem;
+    max-width: 85vw;
+  }
+
+  [dir='rtl'] .sidebar {
+    transform: translateX(100%);
   }
 
   .sidebar--open {
-    transform: translateX(0);
+    transform: translateX(0) !important;
   }
 
   .app-shell__overlay {
@@ -1492,6 +1589,20 @@ button {
     justify-content: center;
   }
 
+  .user-menu__details {
+    display: none;
+  }
+
+  .user-menu__dropdown {
+    position: fixed;
+    inset-inline-end: 0.75rem;
+    top: 3.75rem;
+    inset-inline-start: 0.75rem;
+    width: auto;
+  }
+}
+
+@media (max-width: 768px) {
   .topbar {
     height: 3.5rem;
     padding: 0 1rem;
@@ -1501,16 +1612,14 @@ button {
     padding: 1rem;
   }
 
-  .user-menu__details {
+  /* Keep the store identity readable without crowding the actions on small
+     screens: hide the slug line, keep the name truncated. */
+  .topbar__store-slug {
     display: none;
   }
 
-  .user-menu__dropdown {
-    position: fixed;
-    right: 0.75rem;
-    top: 3.75rem;
-    left: 0.75rem;
-    width: auto;
+  .topbar__store-name {
+    max-width: 9rem;
   }
 
   .meta-list--grid {
@@ -1524,6 +1633,22 @@ button {
 
   .page-header__actions {
     flex-wrap: wrap;
+    margin-inline-start: 0;
+  }
+
+  .page-header__actions .btn {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+
+  .form-actions {
+    flex-direction: column-reverse;
+    align-items: stretch;
+  }
+
+  .form-actions .btn {
+    width: 100%;
+    justify-content: center;
   }
 }
 
@@ -1563,6 +1688,22 @@ button {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
+}
+
+/* Phase 27 — detail-page loading skeleton helpers */
+.skeleton-title {
+  width: 12rem;
+  height: 1.75rem;
+}
+
+.skeleton-form-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.875rem;
+}
+
+.skeleton-form-block__tall {
+  min-height: 5rem;
 }
 
 .skeleton-table {
@@ -1837,6 +1978,224 @@ button {
   background: var(--color-gray-soft);
 }
 
+/* --- Product gallery manager (Phase 26) ----------------------------------- */
+.product-gallery-manager {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.image-upload--dropzone {
+  border: 1.5px dashed var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 1.25rem;
+  text-align: center;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.image-upload--dropzone:hover,
+.image-upload--dropzone:focus-within {
+  border-color: var(--color-primary);
+  background: var(--color-gray-soft);
+}
+
+.image-upload__input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.image-upload__label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+  cursor: pointer;
+  color: var(--color-text-muted);
+}
+
+.image-upload__label strong {
+  color: var(--color-primary);
+  font-size: 0.9375rem;
+}
+
+.upload-queue {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.upload-queue__item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  font-size: 0.875rem;
+  flex-wrap: wrap;
+}
+
+.upload-queue__item--error {
+  border-color: var(--color-danger);
+}
+
+.upload-queue__name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1 1 12rem;
+  font-weight: 600;
+}
+
+.upload-queue__status {
+  color: var(--color-text-muted);
+  font-size: 0.8125rem;
+}
+
+.upload-queue__error {
+  color: var(--color-danger);
+  font-size: 0.8125rem;
+}
+
+.upload-queue__progress {
+  flex: 1 1 100%;
+  height: 0.375rem;
+  border-radius: 999px;
+  background: var(--color-gray-soft);
+  overflow: hidden;
+}
+
+.upload-queue__progress span {
+  display: block;
+  height: 100%;
+  background: var(--color-primary);
+  transition: width 0.2s ease;
+}
+
+.upload-queue__actions {
+  display: inline-flex;
+  gap: 0.375rem;
+}
+
+.product-gallery__item--primary {
+  outline: 2px solid var(--color-primary);
+}
+
+.product-gallery__badge {
+  position: absolute;
+  top: 0.375rem;
+  inset-inline-start: 0.375rem;
+  padding: 0.125rem 0.5rem;
+  border-radius: 999px;
+  background: var(--color-primary);
+  color: #fff;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.product-gallery__controls {
+  display: flex;
+  gap: 0.25rem;
+  padding: 0.375rem;
+  justify-content: center;
+}
+
+.product-gallery__variant {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0 0.375rem 0.5rem;
+  font-size: 0.8125rem;
+  color: var(--color-text-muted);
+}
+
+.product-gallery__variant select {
+  font-size: 0.8125rem;
+}
+
+/* Category selector (searchable multi-select) */
+.category-selector {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+.category-selector__field {
+  position: relative;
+}
+
+.category-selector__spinner {
+  position: absolute;
+  inset-inline-end: 0.75rem;
+  top: 50%;
+  width: 0.875rem;
+  height: 0.875rem;
+  transform: translateY(-50%);
+  border: 2px solid var(--color-gray-soft);
+  border-top-color: var(--color-primary);
+  border-radius: 50%;
+  animation: spinner-rotate 0.7s linear infinite;
+}
+
+.category-selector__results {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 15rem;
+  overflow-y: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+}
+
+.category-selector__result {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  text-align: start;
+  font-size: 0.875rem;
+}
+
+.category-selector__result:hover {
+  background: var(--color-gray-soft);
+}
+
+.category-selector__result--selected {
+  color: var(--color-primary);
+  font-weight: 600;
+}
+
+.category-selector__empty {
+  padding: 0.75rem;
+  color: var(--color-text-muted);
+  font-size: 0.875rem;
+}
+
+@keyframes spinner-rotate {
+  to {
+    transform: translateY(-50%) rotate(360deg);
+  }
+}
+
+
 .form-status-control {
   display: flex;
   align-items: center;
@@ -1855,42 +2214,9 @@ button {
   border-inline-end: 1px solid var(--color-sidebar-border);
 }
 
-@media (max-width: 768px) {
-  [dir='rtl'] .sidebar {
-    left: auto;
-    right: 0;
-    transform: translateX(100%);
-  }
-
-  [dir='rtl'] .sidebar--open {
-    transform: translateX(0);
-  }
-
-  [dir='rtl'] .user-menu__dropdown {
-    right: auto;
-    left: 0.75rem;
-  }
-}
-
-[dir='rtl'] .toast-stack {
-  right: auto;
-  left: 1rem;
-}
-
-[dir='rtl'] .toast {
-  animation-name: toast-in-rtl;
-}
-
-@keyframes toast-in-rtl {
-  from {
-    opacity: 0;
-    transform: translateX(-12px);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
+/* The slide-out drawer transform is handled inside the 1024px media block
+   above; physical left/right overrides are no longer needed because the
+   sidebar now anchors with `inset-inline-start` and flips translateX.
 
 [dir='rtl'] .login__language {
   right: auto;
@@ -2450,6 +2776,17 @@ html {
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-lg);
   overflow: hidden;
+  max-width: 100%;
+}
+
+/* Mockup visuals must never force their grid track wider than the viewport. */
+.mk-hero__visual,
+.mk-feature__visual,
+.mk-storefront__visual,
+.mk-cms__visual,
+.mk-pay__visual,
+.mk-dashboard__visual {
+  min-width: 0;
 }
 
 .mk-browser__bar {
@@ -3338,10 +3675,15 @@ html {
   display: flex;
   gap: 0.75rem;
   align-items: flex-start;
+  min-width: 0;
   padding: 0.875rem 1rem;
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
+}
+
+.mk-cms__item > div {
+  min-width: 0;
 }
 
 .mk-cms__item-icon {
@@ -4052,7 +4394,7 @@ html {
   }
 
   .mk-hero__inner {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
     gap: 2.5rem;
   }
 
@@ -4065,7 +4407,7 @@ html {
   }
 
   .mk-feature {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
     gap: 1.5rem;
   }
 
@@ -4078,17 +4420,17 @@ html {
   }
 
   .mk-storefront__layout {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
     gap: 2rem;
   }
 
   .mk-cms__layout {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
     gap: 2rem;
   }
 
   .mk-pay__layout {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
     gap: 2rem;
   }
 
@@ -4111,7 +4453,6 @@ html {
   .mk-nav__actions .language-switch {
     display: none;
   }
-
   .mk-nav__mobile {
     padding-inline: 1.25rem;
   }
@@ -4125,7 +4466,7 @@ html {
   }
 
   .mk-product__grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .mk-features {
@@ -4133,15 +4474,15 @@ html {
   }
 
   .mk-how__steps {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .mk-cms__list {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .mk-pricing__grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .mk-price-card {
@@ -4149,7 +4490,7 @@ html {
   }
 
   .mk-footer__grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
     gap: 1.75rem;
   }
 
@@ -4178,7 +4519,7 @@ html {
   }
 
   .mk-dash-stats {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .mk-table__cell {
@@ -4192,6 +4533,22 @@ html {
 
   .mk-sf-product:nth-child(3) {
     display: none;
+  }
+}
+
+@media (max-width: 360px) {
+  /* At 320–359px the brand name + CTA no longer fit on one row; keep the logo
+     and the acquisition CTA. */
+  .mk-nav__name {
+    display: none;
+  }
+
+  .mk-nav__actions .btn--md {
+    padding-inline: 0.75rem;
+  }
+
+  .mk-nav__cta-spacer {
+    width: 6rem;
   }
 }
 
@@ -4437,6 +4794,449 @@ html {
   }
   .onboarding__step-label {
     font-size: 0.625rem;
+  }
+}
+
+
+/* ============================================================
+   Phase 27 — responsive filters (mobile drawer)
+   ============================================================ */
+
+.filter-drawer__toggle {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  gap: 0.375rem;
+  min-height: 2.5rem;
+  padding: 0.375rem 0.875rem;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-weight: 600;
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+
+.filter-drawer__toggle:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.filter-drawer__panel {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 768px) {
+  .filters {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .filters__search {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .filter-drawer {
+    width: 100%;
+  }
+
+  .filter-drawer__toggle {
+    display: inline-flex;
+    width: 100%;
+    min-height: var(--touch-target);
+  }
+
+  .filter-drawer__panel {
+    display: none;
+    flex-direction: column;
+    align-items: stretch;
+    width: 100%;
+    padding-top: 0.75rem;
+  }
+
+  .filter-drawer[data-open] .filter-drawer__panel {
+    display: flex;
+  }
+
+  .filter-drawer__panel .input,
+  .filter-drawer__panel .btn {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+/* ============================================================
+   Phase 27 — breadcrumbs
+   ============================================================ */
+
+.breadcrumbs {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  margin-block-end: -0.5rem;
+}
+
+.breadcrumbs ol {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+}
+
+.breadcrumbs li {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  min-width: 0;
+}
+
+.breadcrumbs li + li::before {
+  content: '/';
+  color: var(--color-border-strong);
+  flex-shrink: 0;
+}
+
+.breadcrumbs a {
+  color: var(--color-primary);
+  text-decoration: none;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.breadcrumbs a:hover {
+  text-decoration: underline;
+}
+
+.breadcrumbs [aria-current='page'] {
+  color: var(--color-text);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 16rem;
+}
+
+/* ============================================================
+   Phase 27 — responsive tables → mobile cards
+   ============================================================ */
+
+@media (max-width: 640px) {
+  /* Visually hide the header row but keep it in the accessibility tree so
+     screen readers still announce the table structure. */
+  .table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  .table,
+  .table tbody,
+  .table tr,
+  .table td {
+    display: block;
+    width: 100%;
+  }
+
+  .table tbody {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .table tbody tr {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    padding: 0.5rem;
+    background: var(--color-surface);
+  }
+
+  .table tbody tr:hover {
+    background: var(--color-surface);
+  }
+
+  .table td {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.5rem 0.75rem;
+    border-bottom: 1px solid var(--color-border);
+    text-align: start;
+    white-space: normal;
+    word-break: break-word;
+  }
+
+  .table td:last-child {
+    border-bottom: none;
+  }
+
+  .table td::before {
+    content: attr(data-label);
+    font-size: var(--text-xs);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+
+/* ============================================================
+   Phase 27 — mobile modal (bottom sheet) + touch targets
+   ============================================================ */
+
+@media (max-width: 640px) {
+  .modal-overlay {
+    align-items: flex-end;
+    padding: 1rem 0 0;
+  }
+
+  .modal {
+    max-width: 100%;
+    max-height: calc(100dvh - 1rem);
+    display: flex;
+    flex-direction: column;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    animation: modal-sheet-in 180ms ease;
+  }
+
+  .modal__header {
+    padding: 1rem 1.25rem;
+    flex-shrink: 0;
+  }
+
+  .modal__body {
+    padding: 1.25rem;
+    overflow-y: auto;
+    min-height: 0;
+  }
+
+  .modal__footer {
+    padding: 0.875rem 1.25rem;
+    flex-shrink: 0;
+    box-shadow: 0 -1px 0 var(--color-border);
+  }
+
+  .modal__close {
+    width: var(--touch-target);
+    height: var(--touch-target);
+  }
+}
+
+@keyframes modal-sheet-in {
+  from {
+    opacity: 0;
+    transform: translateY(24px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Comfortable touch targets on touch-sized screens (Phase 27). */
+@media (max-width: 768px) {
+  .btn--sm {
+    min-height: 2.5rem;
+  }
+
+  .topbar__menu-toggle {
+    width: var(--touch-target);
+    height: var(--touch-target);
+  }
+
+  .user-menu__trigger {
+    min-height: var(--touch-target);
+    min-width: var(--touch-target);
+    justify-content: center;
+  }
+
+  .language-switch {
+    min-height: var(--touch-target);
+  }
+
+  .product-gallery__remove {
+    width: 2.25rem;
+    height: 2.25rem;
+  }
+
+  .category-chip__remove {
+    min-width: 2.25rem;
+    min-height: 2.25rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .sidebar__link {
+    min-height: 2.75rem;
+  }
+
+  .sidebar__view-store {
+    min-height: 2.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .pagination {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .pagination__buttons {
+    justify-content: stretch;
+  }
+
+  .pagination__buttons .btn {
+    flex: 1 1 auto;
+    min-height: 2.5rem;
+  }
+}
+
+/* Toast dismiss control (Phase 27). */
+.toast__dismiss {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-inline-start: auto;
+  margin-block: -0.25rem;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 0.8125rem;
+  width: 2rem;
+  height: 2rem;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.toast__dismiss:hover {
+  background: var(--color-gray-soft);
+  color: var(--color-text);
+}
+
+.toast__dismiss:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
+}
+
+/* Phase 27 — native checkbox polish (consistent size + primary accent). */
+.checkbox {
+  width: 1.125rem;
+  height: 1.125rem;
+  accent-color: var(--color-primary);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+@media (max-width: 768px) {
+  .checkbox {
+    width: 1.375rem;
+    height: 1.375rem;
+  }
+}
+
+/* Phase 27 — auth + onboarding mobile polish */
+@media (max-width: 480px) {
+  .login {
+    justify-content: flex-start;
+    padding: 1.25rem 1rem 2rem;
+  }
+
+  .login__card {
+    padding: 1.5rem 1.25rem;
+  }
+
+  .onboarding__card {
+    padding: 1.25rem;
+  }
+
+  .onboarding__topbar {
+    padding: 1rem 1.25rem;
+  }
+
+  .onboarding__stepper {
+    gap: 0.375rem;
+  }
+}
+
+/* ============================================================
+   Phase 27 — product editor (Shopify-style two-column)
+   ============================================================ */
+
+.detail-grid__main,
+.detail-grid__side {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+/* ============================================================
+   Phase 27 — dashboard polish
+   ============================================================ */
+
+.stat-card__value {
+  font-size: clamp(1.375rem, 2.5vw, 1.75rem);
+  word-break: break-word;
+}
+
+@media (max-width: 480px) {
+  .stat-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-3);
+  }
+
+  .stat-card {
+    padding: var(--space-4);
+  }
+
+  .stat-card__value {
+    font-size: 1.375rem;
+  }
+
+  .page-header__title {
+    font-size: 1.375rem;
+  }
+}
+
+@media (max-width: 360px) {
+  .stat-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+    color: var(--color-text-muted);
+    flex-shrink: 0;
+  }
+
+  .table td[data-label='']::before,
+  .table td:not([data-label])::before {
+    display: none;
+  }
+
+  .table td .table__actions {
+    justify-content: flex-end;
+    width: 100%;
+  }
+
+  .table td .table__actions .btn {
+    flex: 1 1 auto;
+    min-height: 2.5rem;
   }
 }
 

@@ -127,6 +127,8 @@ describe('Storefront Commerce (e2e)', () => {
     storeId: 'store-1',
     orderNumber: 'ORD-2026-000001',
     channel: OrderChannel.ONLINE_PAYMENT,
+    paymentMethod: 'ONLINE',
+    paymentStatus: 'UNPAID',
     customerId: 'customer-1',
     status: OrderStatus.PENDING,
     currency: 'EGP',
@@ -738,7 +740,9 @@ describe('Storefront Commerce (e2e)', () => {
         .expect(200);
       expect(res.body.data.orderNumber).toBe('ORD-2026-000001');
       expect(res.body.data.items.length).toBe(1);
-      expect(res.body.data.paymentStatus).toBe('PROCESSING');
+      // Phase 27 — the order-level payment status (UNPAID) is the authoritative
+      // customer-facing state, independent of the payment-attempt record.
+      expect(res.body.data.paymentStatus).toBe('UNPAID');
       // Phase 23 — customer PII is gated behind the lookup token.
       expect(res.body.data.customerEmail).toBeNull();
       expect(res.body.data.customerPhone).toBeNull();

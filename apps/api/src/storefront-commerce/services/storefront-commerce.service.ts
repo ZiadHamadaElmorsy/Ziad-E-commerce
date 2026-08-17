@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { OrderChannel, PaymentStatus, StoreStatus } from '@prisma/client';
+import { OrderChannel, OrderPaymentMethod, PaymentStatus, StoreStatus } from '@prisma/client';
 import type { Request } from 'express';
 import { CartService } from '../../cart/services/cart.service';
 import { CheckoutService } from '../../checkout/services/checkout.service';
@@ -19,6 +19,8 @@ import { isPaymobConfigured } from '../../config/payment-config';
 import type { PaymobConfig } from '../../config/configuration';
 import { StorefrontRepository } from '../../storefront/repositories/storefront.repository';
 import { StorefrontStoreResolver } from '../../storefront/services/storefront-store-resolver';
+import { ShipmentsService } from '../../shipping/services/shipments.service';
+import { CustomerTrackingView } from '../../shipping/shipping.types';
 import { AddCartItemDto } from '../../cart/dto/add-cart-item.dto';
 import { UpdateCartItemDto } from '../../cart/dto/update-cart-item.dto';
 import { CartView } from '../../cart/cart.types';
@@ -68,6 +70,7 @@ export class StorefrontCommerceService {
     private readonly storage: StorageProvider,
     private readonly settings: StoreSettingsService,
     private readonly whatsapp: WhatsappService,
+    private readonly shipments: ShipmentsService,
     private readonly config: ConfigService,
   ) {}
 
@@ -117,11 +120,12 @@ export class StorefrontCommerceService {
   // --- Checkout / Payment -------------------------------------------------------
 
   /**
-   * POST /storefront/checkout — Phase 22: the public checkout fails closed when
-   * NO payment method is available (Paymob unconfigured AND WhatsApp disabled).
-   * This prevents creating an order that can never be paid, and keeps the
-   * customer-facing "neither available" state an explicit merchant
-   * configuration error instead of an unsafe order.
+   * POST /storefront/checkout — Phase 22/27: the public checkout fails closed
+   * ONLY for the ONLINE path when NO online payment method is available
+   * (Paymob unconfigured AND WhatsApp disabled). COD (cash on delivery) is a
+   * first-class payment method that requires no provider configuration: the
+   * order is created UNPAID and the carrier collects the cash on delivery
+   * (Part 6/12). A COD order is never blocked by missing online credentials.
    */
   async checkout(
     request: Pick<Request, 'headers'>,
@@ -129,17 +133,29 @@ export class StorefrontCommerceService {
     dto: CheckoutRequestDto,
     idempotencyKey: string | undefined,
   ): Promise<CheckoutView> {
-    await this.assertPaymentMethodAvailable(request);
-    return this.checkoutInternal(request, guestToken, dto, idempotencyKey, OrderChannel.ONLINE_PAYMENT);
+    const paymentMethod =
+      dto.paymentMethod === 'COD' ? OrderPaymentMethod.COD : OrderPaymentMethod.ONLINE;
+    if (paymentMethod === OrderPaymentMethod.ONLINE) {
+      await this.assertPaymentMethodAvailable(request);
+    }
+    return this.checkoutInternal(
+      request,
+      guestToken,
+      dto,
+      idempotencyKey,
+      OrderChannel.ONLINE_PAYMENT,
+      paymentMethod,
+    );
   }
 
-  /** Shared checkout execution (online payment or WhatsApp channel). */
+  /** Shared checkout execution (online payment, COD or WhatsApp channel). */
   private async checkoutInternal(
     request: Pick<Request, 'headers'>,
     guestToken: string | undefined,
     dto: CheckoutRequestDto,
     idempotencyKey: string | undefined,
     channel: OrderChannel,
+    paymentMethod: OrderPaymentMethod = OrderPaymentMethod.ONLINE,
   ): Promise<CheckoutView> {
     const store = await this.storeResolver.resolve(request);
     return this.checkoutService.createCheckout(
@@ -149,6 +165,7 @@ export class StorefrontCommerceService {
       store.id,
       StoreStatus.ACTIVE,
       channel,
+      paymentMethod,
     );
   }
 
@@ -228,6 +245,24 @@ export class StorefrontCommerceService {
     const authorized =
       lookupToken !== undefined && isValidOrderLookupToken(lookupToken, order.lookupToken);
     return toStorefrontOrderView(order, payment, authorized);
+  }
+
+  // --- Shipping / Tracking -------------------------------------------------------
+
+  /**
+   * GET /storefront/orders/:orderId/tracking (Phase 27 — Part 13/18).
+   * ONE aggregated customer-friendly payload: order number/status, payment
+   * method + COD amount, customer-safe tracking number and the delivery
+   * timeline. Never exposes the shipping provider, provider ids, raw provider
+   * statuses or internal database ids. The order is always resolved
+   * store-scoped — a cross-tenant order id fails closed with NOT_FOUND.
+   */
+  async getOrderTracking(
+    request: Pick<Request, 'headers'>,
+    orderId: string,
+  ): Promise<CustomerTrackingView> {
+    const store = await this.storeResolver.resolve(request);
+    return this.shipments.getCustomerTracking(store.id, orderId);
   }
 
   // --- CMS / Theme ---------------------------------------------------------------

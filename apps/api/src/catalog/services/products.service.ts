@@ -8,7 +8,14 @@ import {
 } from '../../common/errors/domain-exceptions';
 import { TransactionService } from '../../infrastructure/database/transaction.service';
 import { MediaRepository } from '../../media/repositories/media.repository';
-import { buildPaginationMeta, PaginatedView, ProductView, toProductView } from '../catalog.types';
+import {
+  buildPaginationMeta,
+  PaginatedView,
+  ProductMediaView,
+  ProductView,
+  toProductMediaView,
+  toProductView,
+} from '../catalog.types';
 import { mapCatalogWriteError } from '../domain/catalog-error.mapper';
 import { assertValidCatalogSlug, slugify } from '../domain/catalog-slug';
 import {
@@ -19,6 +26,12 @@ import {
 import { requireStoreId } from '../domain/catalog-tenant';
 import { CreateProductDto } from '../dto/create-product.dto';
 import { ListProductsQueryDto } from '../dto/list-products-query.dto';
+import {
+  AttachProductMediaDto,
+  ListProductMediaQueryDto,
+  ReorderProductMediaDto,
+  UpdateProductMediaDto,
+} from '../dto/product-media.dto';
 import { UpdateProductDto } from '../dto/update-product.dto';
 import { ProductMediaRepository } from '../repositories/product-media.repository';
 import { ProductRepository } from '../repositories/product.repository';
@@ -90,6 +103,8 @@ export class ProductsService {
         const created = await this.products.create(tx, {
           storeId,
           name: dto.name,
+          ...(dto.nameAr !== undefined ? { nameAr: dto.nameAr } : {}),
+          ...(dto.nameEn !== undefined ? { nameEn: dto.nameEn } : {}),
           slug,
           ...(dto.description !== undefined ? { description: dto.description } : {}),
           status,
@@ -149,6 +164,8 @@ export class ProductsService {
       await this.transaction.runWithTenant(storeId, async (tx) => {
         await this.products.update(tx, storeId, productId, {
           ...(dto.name !== undefined ? { name: dto.name } : {}),
+          ...(dto.nameAr !== undefined ? { nameAr: dto.nameAr } : {}),
+          ...(dto.nameEn !== undefined ? { nameEn: dto.nameEn } : {}),
           ...(dto.description !== undefined ? { description: dto.description } : {}),
         });
       });
@@ -171,8 +188,18 @@ export class ProductsService {
    * store resolved from the tenant context (never client input). The image is
    * appended at the end of the product's ordered gallery. A duplicate
    * association is rejected with CONFLICT (UNIQUE product_id, media_id).
+   *
+   * Phase 26 extensions (all optional):
+   * - `variantId`: link the image to a variant of the SAME product+store.
+   * - `isPrimary`: promote the image to the product cover (the previous
+   *   primary, if any, is demoted in the same transaction).
+   * - `altText`: per-association alt text.
    */
-  async attachMedia(productId: string, mediaId: string): Promise<ProductView> {
+  async attachMedia(
+    productId: string,
+    mediaId: string,
+    dto?: AttachProductMediaDto,
+  ): Promise<ProductView> {
     const storeId = requireStoreId(this.requestContext);
 
     const product = await this.products.findById(storeId, productId);
@@ -185,25 +212,34 @@ export class ProductsService {
       throw new NotFoundError('The media asset was not found.');
     }
 
+    if (dto?.variantId) {
+      const variant = await this.variants.findById(storeId, dto.variantId);
+      if (!variant || variant.productId !== productId) {
+        throw new NotFoundError('The variant was not found for this product.');
+      }
+    }
+
     try {
       await this.transaction.runWithTenant(storeId, async (tx) => {
         const nextOrder = (await this.productMedia.maxSortOrder(tx, storeId, productId)) + 1;
+        if (dto?.isPrimary) {
+          await this.productMedia.clearPrimary(tx, storeId, productId);
+        }
         await this.productMedia.create(tx, {
           storeId,
           productId,
           mediaId,
           sortOrder: nextOrder,
+          ...(dto?.variantId !== undefined ? { variantId: dto.variantId } : {}),
+          ...(dto?.altText !== undefined ? { altText: dto.altText } : {}),
+          ...(dto?.isPrimary !== undefined ? { isPrimary: dto.isPrimary } : {}),
         });
       });
     } catch (error) {
       throw mapCatalogWriteError(error, PRODUCT_UNIQUE_MESSAGES);
     }
 
-    const updated = await this.products.findById(storeId, productId, true);
-    if (!updated) {
-      throw new NotFoundError('The product was not found.');
-    }
-    return toProductView(updated, updated.variants, updated.productMedia);
+    return this.toDetailView(storeId, productId);
   }
 
   /**
@@ -226,6 +262,116 @@ export class ProductsService {
     if (result.count === 0) {
       throw new NotFoundError('The product image association was not found.');
     }
+  }
+
+  /**
+   * GET /products/:productId/media — paginated gallery metadata (Phase 26).
+   * Returns association rows + minimal media metadata, ordered by sort_order.
+   * The gallery can be filtered to a single variant (`?variantId=`).
+   */
+  async listGallery(
+    productId: string,
+    query: ListProductMediaQueryDto,
+  ): Promise<PaginatedView<ProductMediaView>> {
+    const storeId = requireStoreId(this.requestContext);
+
+    const product = await this.products.findById(storeId, productId);
+    if (!product) {
+      throw new NotFoundError('The product was not found.');
+    }
+
+    const skip = (query.page - 1) * query.limit;
+    const [items, total] = await Promise.all([
+      this.productMedia.findGalleryByProduct(storeId, productId, {
+        variantId: query.variantId,
+        skip,
+        take: query.limit,
+      }),
+      this.productMedia.countByProduct(storeId, productId, query.variantId),
+    ]);
+
+    return {
+      items: items.map(toProductMediaView),
+      meta: buildPaginationMeta(query.page, query.limit, total),
+    };
+  }
+
+  /**
+   * PATCH /products/:productId/media/:mediaId — updates ONE gallery
+   * association: sort order (position), primary flag, variant link or alt
+   * text. Every write is store-scoped; absent/cross-tenant links fail closed
+   * with NOT_FOUND.
+   */
+  async updateMediaLink(
+    productId: string,
+    mediaId: string,
+    dto: UpdateProductMediaDto,
+  ): Promise<ProductView> {
+    const storeId = requireStoreId(this.requestContext);
+
+    const product = await this.products.findById(storeId, productId);
+    if (!product) {
+      throw new NotFoundError('The product was not found.');
+    }
+
+    if (dto.variantId !== undefined && dto.variantId !== null) {
+      const variant = await this.variants.findById(storeId, dto.variantId);
+      if (!variant || variant.productId !== productId) {
+        throw new NotFoundError('The variant was not found for this product.');
+      }
+    }
+
+    try {
+      await this.transaction.runWithTenant(storeId, async (tx) => {
+        if (dto.isPrimary) {
+          await this.productMedia.clearPrimary(tx, storeId, productId);
+        }
+        const result = await this.productMedia.updateLink(tx, storeId, productId, mediaId, {
+          ...(dto.sortOrder !== undefined ? { sortOrder: dto.sortOrder } : {}),
+          ...(dto.isPrimary !== undefined ? { isPrimary: dto.isPrimary } : {}),
+          ...(dto.variantId !== undefined ? { variantId: dto.variantId } : {}),
+          ...(dto.altText !== undefined ? { altText: dto.altText } : {}),
+        });
+        if (!result) {
+          throw new NotFoundError('The product image association was not found.');
+        }
+      });
+    } catch (error) {
+      throw mapCatalogWriteError(error, PRODUCT_UNIQUE_MESSAGES);
+    }
+
+    return this.toDetailView(storeId, productId);
+  }
+
+  /**
+   * PUT /products/:productId/media/order — batch reorder (Phase 26). The
+   * client sends a permutation of the product's attached media ids; positions
+   * are assigned 0..n-1 in ONE tenant-bound transaction. Media ids not
+   * attached to the product are ignored (defensive — they never leak across
+   * tenants because the guarded UPDATEs are store+product-scoped).
+   */
+  async reorderMedia(productId: string, dto: ReorderProductMediaDto): Promise<ProductView> {
+    const storeId = requireStoreId(this.requestContext);
+
+    const product = await this.products.findById(storeId, productId);
+    if (!product) {
+      throw new NotFoundError('The product was not found.');
+    }
+
+    await this.transaction.runWithTenant(storeId, (tx) =>
+      this.productMedia.reorderLinks(tx, storeId, productId, dto.order),
+    );
+
+    return this.toDetailView(storeId, productId);
+  }
+
+  /** Reloads the merchant product detail view (bounded gallery page). */
+  private async toDetailView(storeId: string, productId: string): Promise<ProductView> {
+    const updated = await this.products.findById(storeId, productId, true);
+    if (!updated) {
+      throw new NotFoundError('The product was not found.');
+    }
+    return toProductView(updated, updated.variants, updated.productMedia);
   }
 
   async publish(productId: string): Promise<ProductView> {

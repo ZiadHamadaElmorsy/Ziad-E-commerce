@@ -8,10 +8,13 @@ import { StateTransitionError } from '../../common/errors/domain-exceptions';
  *   PENDING -> CONFIRMED -> PROCESSING -> SHIPPED -> DELIVERED
  *   PENDING  -> CANCELLED     (terminal)
  *   CONFIRMED -> CANCELLED    (terminal)
+ *   CONFIRMED/PROCESSING/SHIPPED -> RETURNED (terminal, Phase 28 — the
+ *     carrier confirmed the shipment is being returned to the merchant; the
+ *     order mirrors the shipment return without coupling the two machines)
  *
  * - No forward-state skipping; no arbitrary transitions; no self-transitions.
- * - CANCELLED is terminal and only reachable from PENDING or CONFIRMED.
- * - DELIVERED is terminal; terminal states never move backwards.
+ * - CANCELLED / RETURNED / DELIVERED are terminal; terminal states never move
+ *   backwards.
  * - The documented payment-driven PENDING -> CONFIRMED path is part of the
  *   same normal lifecycle; reservation CONSUMPTION on payment success belongs
  *   to the Payments phase, not to this state machine.
@@ -23,7 +26,10 @@ export function assertOrderTransition(from: OrderStatus, to: OrderStatus): void 
     (from === OrderStatus.PROCESSING && to === OrderStatus.SHIPPED) ||
     (from === OrderStatus.SHIPPED && to === OrderStatus.DELIVERED) ||
     (from === OrderStatus.PENDING && to === OrderStatus.CANCELLED) ||
-    (from === OrderStatus.CONFIRMED && to === OrderStatus.CANCELLED);
+    (from === OrderStatus.CONFIRMED && to === OrderStatus.CANCELLED) ||
+    (from === OrderStatus.CONFIRMED && to === OrderStatus.RETURNED) ||
+    (from === OrderStatus.PROCESSING && to === OrderStatus.RETURNED) ||
+    (from === OrderStatus.SHIPPED && to === OrderStatus.RETURNED);
 
   if (!legal) {
     throw new StateTransitionError(`Order status cannot transition from ${from} to ${to}.`);
@@ -34,12 +40,14 @@ export function assertOrderTransition(from: OrderStatus, to: OrderStatus): void 
 export interface OrderTransitionTimestamps {
   confirmedAt?: Date;
   cancelledAt?: Date;
+  returnedAt?: Date;
 }
 
-/** The extra columns a legal transition writes (confirmed_at / cancelled_at). */
+/** The extra columns a legal transition writes (confirmed_at / cancelled_at / returned_at). */
 export function transitionTimestamps(to: OrderStatus): OrderTransitionTimestamps {
   return {
     ...(to === OrderStatus.CONFIRMED ? { confirmedAt: new Date() } : {}),
     ...(to === OrderStatus.CANCELLED ? { cancelledAt: new Date() } : {}),
+    ...(to === OrderStatus.RETURNED ? { returnedAt: new Date() } : {}),
   };
 }

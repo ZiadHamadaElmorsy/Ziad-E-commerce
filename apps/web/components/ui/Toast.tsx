@@ -10,6 +10,7 @@ import {
   type ReactNode,
 } from 'react';
 import { cn } from '@/lib/utils';
+import { useI18n } from '@/lib/i18n/i18n-context';
 
 type ToastTone = 'success' | 'error' | 'info';
 
@@ -35,18 +36,24 @@ const TOAST_ICONS: Record<ToastTone, string> = {
   info: 'ℹ',
 };
 
-/** Toast notifications (success / error / info), stacked top-right. */
+/** Toast notifications (success / error / info), stacked inline-end. */
 export function ToastProvider({ children }: { children: ReactNode }) {
+  const { t } = useI18n();
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const nextId = useRef(1);
 
-  const push = useCallback((tone: ToastTone, message: string) => {
-    const id = nextId.current++;
-    setToasts((current) => [...current, { id, tone, message }]);
-    window.setTimeout(() => {
-      setToasts((current) => current.filter((toast) => toast.id !== id));
-    }, 4500);
+  const dismiss = useCallback((id: number) => {
+    setToasts((current) => current.filter((toast) => toast.id !== id));
   }, []);
+
+  const push = useCallback(
+    (tone: ToastTone, message: string) => {
+      const id = nextId.current++;
+      setToasts((current) => [...current, { id, tone, message }]);
+      window.setTimeout(() => dismiss(id), 4500);
+    },
+    [dismiss],
+  );
 
   const value = useMemo<ToastContextValue>(
     () => ({
@@ -73,6 +80,14 @@ export function ToastProvider({ children }: { children: ReactNode }) {
               {TOAST_ICONS[toast.tone]}
             </span>
             <span className="toast__message">{toast.message}</span>
+            <button
+              type="button"
+              className="toast__dismiss"
+              aria-label={t('common.dismiss')}
+              onClick={() => dismiss(toast.id)}
+            >
+              ✕
+            </button>
           </div>
         ))}
       </div>

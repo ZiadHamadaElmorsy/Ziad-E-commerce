@@ -23,7 +23,7 @@ import { InventoryService } from '../../inventory/services/inventory.service';
 import { CartView, toCartView } from '../cart.types';
 import { mapCartWriteError } from '../domain/cart-error.mapper';
 import { generateGuestToken } from '../domain/cart-guest-token';
-import { assertCartUsable, isCartExpiredDue } from '../domain/cart-status';
+import { assertCartNotCompleted, assertCartUsable, isCartExpiredDue } from '../domain/cart-status';
 import { AddCartItemDto } from '../dto/add-cart-item.dto';
 import { UpdateCartItemDto } from '../dto/update-cart-item.dto';
 import { CartItemRepository } from '../repositories/cart-item.repository';
@@ -105,13 +105,27 @@ export class CartService {
         // Resolve the session cart, or create a new guest cart on first use.
         // New carts carry an abandoned-cart expiry (CART_TTL_MS) so the
         // periodic sweep can transition untouched carts ACTIVE -> EXPIRED.
-        const cart = guestToken
+        let cart = guestToken
           ? await this.resolveGuestCartTx(tx, resolvedStoreId, guestToken)
           : await this.carts.create(tx, {
               storeId: resolvedStoreId,
               guestToken: generateGuestToken(),
               expiresAt: new Date(Date.now() + this.cartTtlMs()),
             });
+
+        // Phase 27 (Part 17) — cart lifecycle fix: a COMPLETED cart belongs to
+        // a finished checkout. Adding more items starts a FRESH guest cart
+        // (new token) instead of failing the customer with "The cart has been
+        // completed and can no longer be modified." The response carries the
+        // new token so the storefront persists it; the completed cart stays
+        // archived and can never produce a second order.
+        if (cart.status === CartStatus.COMPLETED) {
+          cart = await this.carts.create(tx, {
+            storeId: resolvedStoreId,
+            guestToken: generateGuestToken(),
+            expiresAt: new Date(Date.now() + this.cartTtlMs()),
+          });
+        }
 
         await this.assertCartUsableAfterExpiry(tx, cart);
 
@@ -155,6 +169,10 @@ export class CartService {
     const cart = await this.resolveGuestCart(resolvedStoreId, guestToken);
     const current = await this.lazyExpire(cart);
     assertCartUsable(current);
+    // Phase 27 (Part 17): a COMPLETED cart belongs to a finished checkout.
+    // Treat it as "no usable cart" so the storefront clears the stale token
+    // and starts fresh instead of showing the completed-cart error.
+    assertCartNotCompleted(current);
 
     const item = await this.items.findById(current.id, itemId);
     if (!item) {
@@ -192,6 +210,8 @@ export class CartService {
     const cart = await this.resolveGuestCart(resolvedStoreId, guestToken);
     const current = await this.lazyExpire(cart);
     assertCartUsable(current);
+    // Phase 27 (Part 17): completed-cart mutation → treat as no usable cart.
+    assertCartNotCompleted(current);
 
     try {
       const { count } = await this.transaction.runWithTenant(resolvedStoreId, (tx) =>
@@ -214,6 +234,12 @@ export class CartService {
     const cart = await this.resolveGuestCart(resolvedStoreId, guestToken);
     const current = await this.lazyExpire(cart);
     assertCartUsable(current);
+    // Phase 27 (Part 17): clearing a COMPLETED cart is a no-op — the
+    // storefront clears its local token regardless; the completed cart stays
+    // archived (it can never be reused for a second checkout).
+    if (current.status === CartStatus.COMPLETED) {
+      return;
+    }
 
     await this.transaction.runWithTenant(resolvedStoreId, (tx) =>
       this.items.deleteManyByCart(tx, current.id),

@@ -1,5 +1,5 @@
 import { CartStatus } from '@prisma/client';
-import { StateTransitionError } from '../../common/errors/domain-exceptions';
+import { NotFoundError, StateTransitionError } from '../../common/errors/domain-exceptions';
 
 /**
  * Cart lifecycle (docs/DOMAIN-MODEL.md §10.1, docs/DATABASE.md §17.4):
@@ -35,4 +35,16 @@ export function isCartExpiredDue(
     cart.expiresAt !== null &&
     cart.expiresAt.getTime() <= now.getTime()
   );
+}
+
+/**
+ * Phase 27 (Part 17) — completed-cart mutation guard. A COMPLETED cart belongs
+ * to a finished checkout and is never reused; mutating it is surfaced as "no
+ * usable cart" (NOT_FOUND) so the storefront clears the stale guest token and
+ * starts a fresh cart instead of showing the raw lifecycle error.
+ */
+export function assertCartNotCompleted(cart: { status: CartStatus }): void {
+  if (cart.status === CartStatus.COMPLETED) {
+    throw new NotFoundError('No cart was found for this session.');
+  }
 }

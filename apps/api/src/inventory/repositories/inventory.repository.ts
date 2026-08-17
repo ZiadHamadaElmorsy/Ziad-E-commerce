@@ -74,6 +74,33 @@ export class InventoryRepository {
   }
 
   /**
+   * (5) Return restock (Phase 28 — F-1): restores sold/consumed stock that a
+   *     returned/rejected shipment brings back to the merchant.
+   *
+   *   UPDATE inventory
+   *      SET on_hand_quantity = on_hand_quantity + qty
+   *    WHERE store_id = ? AND variant_id = ?;
+   *
+   * Only invoked AFTER the shipment's restock guard (`restocked_at` claimed in
+   * the same transaction) succeeded, so it is exactly-once. The CHECK
+   * constraints (`on_hand >= 0`, `on_hand >= reserved`) remain the final guard.
+   */
+  async guardedRestock(
+    tx: Prisma.TransactionClient,
+    storeId: string,
+    variantId: string,
+    quantity: number,
+  ): Promise<{ count: number }> {
+    const count = await tx.$executeRaw`
+      UPDATE "inventory"
+         SET "on_hand_quantity" = "on_hand_quantity" + ${quantity}::int,
+             "updated_at" = now()
+       WHERE "store_id" = ${storeId}::uuid
+         AND "variant_id" = ${variantId}::uuid`;
+    return { count };
+  }
+
+  /**
    * (1) Manual adjustment / stock in (docs/DATABASE.md §13.3):
    *
    *   UPDATE inventory

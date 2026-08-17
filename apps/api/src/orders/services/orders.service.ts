@@ -119,6 +119,16 @@ export class OrdersService {
     // Validate the documented lifecycle transition BEFORE any write.
     assertOrderTransition(order.status, dto.status);
 
+    // Phase 28 — F-10: order-level RETURNED is driven by the SHIPMENT flow,
+    // where the restock/refund side effects are guarded exactly-once by
+    // `shipments.restocked_at`. The manual status endpoint deliberately rejects
+    // RETURNED so an un-guarded manual transition cannot double-restock.
+    if (dto.status === OrderStatus.RETURNED) {
+      throw new StateTransitionError(
+        'Order returns are applied through the shipment flow; update the shipment instead.',
+      );
+    }
+
     const actorAuthUserId = this.requestContext.getCurrent()?.user?.authUserId;
 
     try {

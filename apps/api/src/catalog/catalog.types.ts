@@ -21,6 +21,8 @@ export interface VariantView {
   id: string;
   productId: string;
   name: string;
+  /** Structured variant attributes (e.g. { color: 'Black', size: 'M' }). */
+  attributes: Record<string, string> | null;
   sku: string | null;
   price: number;
   compareAtPrice: number | null;
@@ -33,9 +35,25 @@ export interface ProductImage {
   altText: string | null;
 }
 
+/** A ProductMedia gallery row: the association + minimal media metadata. */
+export interface ProductMediaView {
+  id: string;
+  mediaId: string;
+  variantId: string | null;
+  altText: string | null;
+  sortOrder: number;
+  isPrimary: boolean;
+  mediaType: 'IMAGE' | 'VIDEO' | 'FILE';
+  mimeType: string | null;
+  sizeBytes: number | null;
+  createdAt: Date | string;
+}
+
 export interface ProductView {
   id: string;
   name: string;
+  nameAr: string | null;
+  nameEn: string | null;
   slug: string;
   description: string | null;
   status: ProductStatus;
@@ -47,6 +65,8 @@ export interface ProductView {
 export interface CategoryView {
   id: string;
   name: string;
+  nameAr: string | null;
+  nameEn: string | null;
   slug: string;
   description: string | null;
   status: CategoryStatus;
@@ -75,6 +95,7 @@ export function toVariantView(variant: ProductVariant): VariantView {
     id: variant.id,
     productId: variant.productId,
     name: variant.name,
+    attributes: normalizeAttributes(variant.attributes),
     sku: variant.sku,
     price: priceToNumber(variant.price),
     compareAtPrice: variant.compareAtPrice === null ? null : priceToNumber(variant.compareAtPrice),
@@ -89,6 +110,48 @@ export function toProductImages(
   return (productMedia ?? []).map((pm) => ({ id: pm.media.id, altText: pm.media.altText }));
 }
 
+/** Normalizes a stored JSONB attributes value to a string map (or null). */
+export function normalizeAttributes(attributes: unknown): Record<string, string> | null {
+  if (attributes === null || attributes === undefined) return null;
+  if (typeof attributes !== 'object' || Array.isArray(attributes)) return null;
+  const entries = Object.entries(attributes as Record<string, unknown>);
+  if (entries.length === 0) return null;
+  const normalized: Record<string, string> = {};
+  for (const [key, value] of entries) {
+    if (typeof value === 'string' && value.trim().length > 0) {
+      normalized[key] = value;
+    }
+  }
+  return Object.keys(normalized).length > 0 ? normalized : null;
+}
+
+/** Maps a ProductMedia row + media metadata to the public gallery view. */
+export function toProductMediaView(
+  link: {
+    id: string;
+    mediaId: string;
+    variantId: string | null;
+    altText: string | null;
+    sortOrder: number;
+    isPrimary: boolean;
+    createdAt: Date | string;
+    media: { mediaType: string; mimeType: string | null; sizeBytes: bigint | null };
+  },
+): ProductMediaView {
+  return {
+    id: link.id,
+    mediaId: link.mediaId,
+    variantId: link.variantId,
+    altText: link.altText,
+    sortOrder: link.sortOrder,
+    isPrimary: link.isPrimary,
+    mediaType: link.media.mediaType as ProductMediaView['mediaType'],
+    mimeType: link.media.mimeType,
+    sizeBytes: link.media.sizeBytes === null ? null : priceToNumber(link.media.sizeBytes),
+    createdAt: link.createdAt,
+  };
+}
+
 export function toProductView(
   product: Product,
   variants: ProductVariant[],
@@ -97,6 +160,8 @@ export function toProductView(
   return {
     id: product.id,
     name: product.name,
+    nameAr: product.nameAr ?? null,
+    nameEn: product.nameEn ?? null,
     slug: product.slug,
     description: product.description,
     status: product.status,
@@ -109,6 +174,8 @@ export function toCategoryView(category: Category): CategoryView {
   return {
     id: category.id,
     name: category.name,
+    nameAr: category.nameAr ?? null,
+    nameEn: category.nameEn ?? null,
     slug: category.slug,
     description: category.description,
     status: category.status,

@@ -7,6 +7,7 @@ import { useI18n } from '@/lib/i18n/i18n-context';
 import { catalogApi } from '@/lib/api/catalog';
 import type { CategoryView, ProductView } from '@/lib/api/types';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { Breadcrumbs } from '@/components/ui/Breadcrumbs';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Field, Input, Textarea } from '@/components/ui/FormControls';
@@ -31,6 +32,8 @@ export default function CategoryDetailsPage() {
   const [error, setError] = useState<string | null>(null);
 
   const [name, setName] = useState('');
+  const [nameAr, setNameAr] = useState('');
+  const [nameEn, setNameEn] = useState('');
   const [description, setDescription] = useState('');
   const [saving, setSaving] = useState(false);
   const [nameError, setNameError] = useState<string | undefined>();
@@ -49,6 +52,8 @@ export default function CategoryDetailsPage() {
       const loaded = categoryResult.data;
       setCategory(loaded);
       setName(loaded.name);
+      setNameAr(loaded.nameAr ?? '');
+      setNameEn(loaded.nameEn ?? '');
       setDescription(loaded.description ?? '');
       setProducts(productsResult.data);
     } catch (caught) {
@@ -77,6 +82,8 @@ export default function CategoryDetailsPage() {
     try {
       const result = await catalogApi.updateCategory(category.id, {
         name: name.trim(),
+        nameAr: nameAr.trim() || null,
+        nameEn: nameEn.trim() || null,
         description: description.trim() ? description.trim() : null,
       });
       setCategory(result.data);
@@ -124,6 +131,13 @@ export default function CategoryDetailsPage() {
 
   return (
     <div className="page">
+      <Breadcrumbs
+        items={[
+          { label: t('nav.dashboard'), href: '/dashboard' },
+          { label: t('nav.categories'), href: '/dashboard/categories' },
+          { label: category.name },
+        ]}
+      />
       <PageHeader
         title={category.name}
         description={`/${category.slug}`}
@@ -151,6 +165,29 @@ export default function CategoryDetailsPage() {
                     id="category-name"
                     value={name}
                     onChange={(event) => setName(event.target.value)}
+                  />
+                </Field>
+                <Field
+                  label={t('categories.nameAr')}
+                  htmlFor="category-name-ar"
+                  hint={t('products.details.nameArHint')}
+                >
+                  <Input
+                    id="category-name-ar"
+                    value={nameAr}
+                    onChange={(event) => setNameAr(event.target.value)}
+                    dir="rtl"
+                  />
+                </Field>
+                <Field
+                  label={t('categories.nameEn')}
+                  htmlFor="category-name-en"
+                  hint={t('products.details.nameEnHint')}
+                >
+                  <Input
+                    id="category-name-en"
+                    value={nameEn}
+                    onChange={(event) => setNameEn(event.target.value)}
                   />
                 </Field>
                 <Field
@@ -202,16 +239,16 @@ export default function CategoryDetailsPage() {
                     const activeVariant = product.variants.find((v) => v.status === 'ACTIVE');
                     return (
                       <tr key={product.id}>
-                        <td>
+                        <td data-label={t('categories.details.productsTitle')}>
                           <Link href={`/dashboard/products/${product.id}`} className="link">
                             {product.name}
                           </Link>
                           <div className="table__muted">/{product.slug}</div>
                         </td>
-                        <td>
+                        <td data-label={t('common.status')}>
                           <StatusBadge status={product.status} />
                         </td>
-                        <td>{formatEgpHtml(activeVariant?.price)}</td>
+                        <td data-label={t('common.price')}>{formatEgpHtml(activeVariant?.price)}</td>
                       </tr>
                     );
                   })}

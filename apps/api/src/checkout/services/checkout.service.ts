@@ -8,6 +8,8 @@ import {
   Order,
   OrderChannel,
   OrderItem,
+  OrderPaymentMethod,
+  OrderPaymentStatus,
   OrderStatus,
   Prisma,
   ProductStatus,
@@ -132,6 +134,7 @@ export class CheckoutService {
     storeId?: string,
     storeStatus?: StoreStatus,
     channel: OrderChannel = OrderChannel.ONLINE_PAYMENT,
+    paymentMethod: OrderPaymentMethod = OrderPaymentMethod.ONLINE,
   ): Promise<CheckoutView> {
     const resolvedStoreId = storeId ?? requireStoreId(this.requestContext);
     const resolvedStoreStatus = storeStatus ?? this.requestContext.getCurrent()?.store?.status;
@@ -161,6 +164,7 @@ export class CheckoutService {
             guestToken,
             idempotencyKey,
             channel,
+            paymentMethod,
           ),
         );
         return toCheckoutView({
@@ -201,6 +205,7 @@ export class CheckoutService {
     guestToken: string | undefined,
     idempotencyKey: string | undefined,
     channel: OrderChannel,
+    paymentMethod: OrderPaymentMethod,
   ): Promise<{
     order: Order & { items: OrderItem[] };
     reservations: InventoryReservation[];
@@ -289,6 +294,7 @@ export class CheckoutService {
       subtotal,
       idempotencyKey,
       channel,
+      paymentMethod,
     });
 
     // 9. Link the reservations to the order (docs/DATABASE.md §28.1 step 5) —
@@ -416,6 +422,7 @@ export class CheckoutService {
       subtotal: bigint;
       idempotencyKey: string | undefined;
       channel: OrderChannel;
+      paymentMethod: OrderPaymentMethod;
     },
   ): Promise<Order & { items: OrderItem[] }> {
     // MVP totals: discount/shipping/tax engines are out of scope
@@ -426,6 +433,12 @@ export class CheckoutService {
       storeId,
       orderNumber: '',
       channel: input.channel,
+      // Phase 27 — payment method (ONLINE | COD) + order-level payment status.
+      // COD orders are created UNPAID and become PAID only after the carrier
+      // confirms delivery/collection (Part 11); online orders become PAID on
+      // the Paymob webhook confirmation (Part 6).
+      paymentMethod: input.paymentMethod,
+      paymentStatus: OrderPaymentStatus.UNPAID,
       customerId: input.customer.id,
       status: OrderStatus.PENDING,
       currency: input.cart.currency,

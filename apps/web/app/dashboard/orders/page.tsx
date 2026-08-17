@@ -8,8 +8,8 @@ import { ordersApi } from '@/lib/api/orders';
 import type { OrderStatus, OrderSummaryView } from '@/lib/api/types';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Card } from '@/components/ui/Card';
-import { Button } from '@/components/ui/Button';
 import { Input, Select } from '@/components/ui/FormControls';
+import { FilterBar } from '@/components/ui/FilterBar';
 import { StatusBadge } from '@/components/ui/Badge';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorState } from '@/components/ui/ErrorState';
@@ -26,6 +26,7 @@ const STATUS_VALUES: OrderStatus[] = [
   'PROCESSING',
   'SHIPPED',
   'DELIVERED',
+  'RETURNED',
   'CANCELLED',
 ];
 
@@ -107,15 +108,25 @@ export default function OrdersPage() {
       />
 
       <Card>
-        <div className="filters">
-          <div className="filters__search">
+        <FilterBar
+          search={
             <Input
               aria-label={t('orders.searchPlaceholder')}
               placeholder={t('orders.searchPlaceholder')}
               value={searchDraft}
               onChange={(event) => onSearchChange(event.target.value)}
             />
-          </div>
+          }
+          activeCount={status ? 1 : 0}
+          onClear={
+            search || status
+              ? () => {
+                  setSearchDraft('');
+                  router.replace('/dashboard/orders');
+                }
+              : undefined
+          }
+        >
           <Select
             aria-label={t('orders.filterStatus')}
             value={status}
@@ -128,18 +139,7 @@ export default function OrdersPage() {
               </option>
             ))}
           </Select>
-          {(search || status) && (
-            <Button
-              variant="ghost"
-              onClick={() => {
-                setSearchDraft('');
-                router.replace('/dashboard/orders');
-              }}
-            >
-              {t('common.clearFilters')}
-            </Button>
-          )}
-        </div>
+        </FilterBar>
 
         {error ? (
           <ErrorState message={error} onRetry={() => void load()} />
@@ -168,14 +168,16 @@ export default function OrdersPage() {
               <tbody>
                 {orders.map((order) => (
                   <tr key={order.id}>
-                    <td>
+                    <td data-label={t('orders.table.order')}>
                       <Link href={`/dashboard/orders/${order.id}`} className="link">
                         {order.orderNumber}
                       </Link>
                     </td>
-                    <td>{formatDate(order.createdAt)}</td>
-                    <td>{order.customerEmail ?? order.customerPhone ?? '—'}</td>
-                    <td>
+                    <td data-label={t('orders.table.date')}>{formatDate(order.createdAt)}</td>
+                    <td data-label={t('orders.table.customer')}>
+                      {order.customerEmail ?? order.customerPhone ?? '—'}
+                    </td>
+                    <td data-label={t('orders.details.channel')}>
                       <span
                         className={
                           order.channel === 'WHATSAPP' ? 'badge badge--whatsapp' : 'badge'
@@ -187,11 +189,11 @@ export default function OrdersPage() {
                           : t('orders.channel.ONLINE_PAYMENT')}
                       </span>
                     </td>
-                    <td>
+                    <td data-label={t('orders.table.status')}>
                       <StatusBadge status={order.status} />
                     </td>
-                    <td>{formatEgpHtml(order.grandTotal)}</td>
-                    <td>
+                    <td data-label={t('orders.table.total')}>{formatEgpHtml(order.grandTotal)}</td>
+                    <td data-label="">
                       <div className="table__actions">
                         <Link
                           href={`/dashboard/orders/${order.id}`}

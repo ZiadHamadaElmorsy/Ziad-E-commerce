@@ -7,6 +7,7 @@ import {
   storeCheckoutPath,
   storeHomePath,
   storeOrderPath,
+  storeOrderTrackingPath,
   storePagePath,
   storeProductPath,
   storeProductsPath,
@@ -23,6 +24,12 @@ describe('storefront routing helpers', () => {
     expect(storeCartPath('my-store')).toBe('/store/my-store/cart');
     expect(storeCheckoutPath('my-store')).toBe('/store/my-store/checkout');
     expect(storeOrderPath('my-store', 'order-1')).toBe('/store/my-store/orders/order-1');
+  });
+
+  it('builds the customer tracking route (Phase 27 — Part 13)', () => {
+    expect(storeOrderTrackingPath('my-store', 'order-1')).toBe(
+      '/store/my-store/orders/order-1/tracking',
+    );
   });
 
   it('maps CMS navigation items to storefront routes', () => {

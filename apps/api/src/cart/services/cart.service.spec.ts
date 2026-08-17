@@ -337,6 +337,36 @@ describe('CartService', () => {
       expect(items.create).not.toHaveBeenCalled();
     });
 
+    it('starts a FRESH cart when adding to a COMPLETED cart (Phase 27 — Part 17 fix)', async () => {
+      withTenant();
+      stubPurchasableFlow();
+      // The guest token still points at the cart completed by a finished
+      // checkout (e.g. the customer navigated back after ordering).
+      carts.findByGuestTokenTx.mockResolvedValue({
+        ...cartRow,
+        status: CartStatus.COMPLETED,
+        completedAt: new Date('2026-08-14T00:00:00Z'),
+      });
+      items.findByVariantTx.mockResolvedValue(null);
+
+      await service.addItem('guest-token-1', addDto());
+
+      // A NEW cart is created (with a fresh token) and the item is added to it —
+      // the customer never sees "The cart has been completed...".
+      expect(carts.create).toHaveBeenCalledWith(
+        tx,
+        expect.objectContaining({
+          storeId: 'store-1',
+          guestToken: expect.any(String),
+        }),
+      );
+      expect(items.create).toHaveBeenCalledWith(tx, {
+        cartId: 'cart-1',
+        variantId: 'variant-1',
+        quantity: 2,
+      });
+    });
+
     it('merges quantity when the variant already has a line (UNIQUE cart_id, variant_id)', async () => {
       withTenant();
       stubPurchasableFlow();

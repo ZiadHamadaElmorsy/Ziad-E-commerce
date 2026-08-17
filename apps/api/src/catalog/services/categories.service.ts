@@ -61,6 +61,8 @@ export class CategoriesService {
         return this.categories.create(tx, {
           storeId,
           name: dto.name,
+          ...(dto.nameAr !== undefined ? { nameAr: dto.nameAr } : {}),
+          ...(dto.nameEn !== undefined ? { nameEn: dto.nameEn } : {}),
           slug,
           ...(dto.description !== undefined ? { description: dto.description } : {}),
           status: CategoryStatus.ACTIVE,
@@ -77,6 +79,7 @@ export class CategoriesService {
     const skip = (query.page - 1) * query.limit;
 
     const filter = {
+      search: query.search,
       skip,
       take: query.limit,
       orderBy: { createdAt: 'desc' as const },
@@ -84,7 +87,7 @@ export class CategoriesService {
 
     const [items, total] = await Promise.all([
       this.categories.findMany(storeId, filter),
-      this.categories.count(storeId),
+      this.categories.count(storeId, query.search),
     ]);
 
     return {
@@ -126,6 +129,8 @@ export class CategoriesService {
       const updated = await this.transaction.runWithTenant(storeId, (tx) =>
         this.categories.update(tx, storeId, categoryId, {
           ...(dto.name !== undefined ? { name: dto.name } : {}),
+          ...(dto.nameAr !== undefined ? { nameAr: dto.nameAr } : {}),
+          ...(dto.nameEn !== undefined ? { nameEn: dto.nameEn } : {}),
           ...(dto.description !== undefined ? { description: dto.description } : {}),
         }),
       );

@@ -1,5 +1,12 @@
 import { Injectable } from '@nestjs/common';
-import { Order, OrderChannel, OrderStatus, Prisma } from '@prisma/client';
+import {
+  Order,
+  OrderChannel,
+  OrderPaymentMethod,
+  OrderPaymentStatus,
+  OrderStatus,
+  Prisma,
+} from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { OrderWithDetails, OrderWithItems } from '../checkout.types';
 
@@ -81,6 +88,10 @@ export interface CreateOrderInput {
   orderNumber: string;
   /** Order acquisition/payment channel (Phase 22 — default ONLINE_PAYMENT). */
   channel: OrderChannel;
+  /** How the order's payment is settled (Phase 27 — ONLINE | COD). */
+  paymentMethod: OrderPaymentMethod;
+  /** Order-level payment status (Phase 27 — COD orders start UNPAID). */
+  paymentStatus: OrderPaymentStatus;
   customerId: string | null;
   status: OrderStatus;
   currency: string;

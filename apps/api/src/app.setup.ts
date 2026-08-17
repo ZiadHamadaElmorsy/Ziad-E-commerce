@@ -4,6 +4,7 @@ import { HttpAdapterHost } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import type { NextFunction, Request, Response } from 'express';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
+import { AppLogger } from './common/logging/app-logger';
 import { SecurityHeadersMiddleware } from './common/security/security-headers.middleware';
 
 export const API_PREFIX = 'api/v1';
@@ -15,6 +16,7 @@ export const API_PREFIX = 'api/v1';
  */
 export function setupApp(app: INestApplication): void {
   const configService = app.get(ConfigService);
+  const nodeEnv = configService.get<string>('nodeEnv', 'development');
 
   app.setGlobalPrefix(API_PREFIX);
 
@@ -27,6 +29,14 @@ export function setupApp(app: INestApplication): void {
   );
 
   app.useGlobalFilters(new AllExceptionsFilter(app.get(HttpAdapterHost)));
+
+  // Phase 28 — F-4: structured JSON logging with per-request correlation
+  // (requestId/method/path/storeId from the AsyncLocalStorage context). Every
+  // `new Logger(...)` instance in the application routes through AppLogger once
+  // installed. Skipped under NODE_ENV=test so suites keep their default output.
+  if (nodeEnv !== 'test') {
+    app.useLogger(app.get(AppLogger));
+  }
 
   // Phase 21 — defensive security headers on every API response. HSTS is only
   // sent when the deployment explicitly enables it on HTTPS production
@@ -61,7 +71,6 @@ export function setupApp(app: INestApplication): void {
     credentials: true,
   });
 
-  const nodeEnv = configService.get<string>('nodeEnv', 'development');
   if (nodeEnv !== 'production' && nodeEnv !== 'test') {
     const swaggerConfig = new DocumentBuilder()
       .setTitle('Ziad E-commerce API')

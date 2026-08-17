@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import {
   EventProcessingStatus,
+  OrderPaymentStatus,
   OrderStatus,
   PaymentEvent,
   PaymentStatus,
@@ -84,7 +85,30 @@ export class PaymobWebhookService {
       throw new BadRequestError('Unrecognized payment webhook payload.');
     }
 
-    // 3. Claim/dedupe the event row (UNIQUE provider + provider_event_id).
+    // 3. Claim + process (the event was verified over the raw body above).
+    return this.processVerifiedEvent(event, body);
+  }
+
+  /**
+   * Processes an ALREADY-VERIFIED provider event (Phase 28 — F-3). Shared by
+   * the live webhook path and the payment-event retry job: the retry job loads
+   * RECEIVED/ERROR `payment_events` rows (whose signatures were verified when
+   * first received), re-parses the stored payload and re-applies the guarded,
+   * idempotent transitions — no signature re-verification is possible or needed.
+   *
+   * Steps (DATABASE §16.5):
+   *   1. Claim/dedupe the event row (UNIQUE provider + provider_event_id).
+   *   2. Resolve the payment (tenant derived server-side from the payment row).
+   *   3. Apply guarded transitions in ONE tenant-bound transaction
+   *      (§28.2/§28.3): SUCCEEDED -> consume reservations + confirm the order;
+   *      FAILED -> release reservations + mark order payment FAILED.
+   *   4. Mark the event PROCESSED.
+   */
+  async processVerifiedEvent(
+    event: ProviderWebhookEvent,
+    body: unknown,
+  ): Promise<WebhookProcessingResult> {
+    // 1. Claim/dedupe the event row (UNIQUE provider + provider_event_id).
     const claimed = await this.claimEvent(event, body);
     if (claimed.alreadyProcessed) {
       // Phase 23 — safe structured log for duplicate deliveries (ids only).
@@ -94,7 +118,7 @@ export class PaymobWebhookService {
       return { status: 'already_processed' };
     }
 
-    // 4. Resolve the payment (tenant derived server-side from the payment row).
+    // 2. Resolve the payment (tenant derived server-side from the payment row).
     const payment = event.paymentReference
       ? await this.payments.findByGlobalId(event.paymentReference)
       : null;
@@ -108,7 +132,7 @@ export class PaymobWebhookService {
       return { status: 'payment_unresolved' };
     }
 
-    // 5. Apply guarded transitions + mark the event PROCESSED in ONE
+    // 3. Apply guarded transitions + mark the event PROCESSED in ONE
     //    tenant-bound transaction (DATABASE §28.2/§28.3/§16.5).
     try {
       await this.transaction.runWithTenant(payment.storeId, async (tx) => {
@@ -187,7 +211,7 @@ export class PaymobWebhookService {
   private async applySuccess(
     tx: Prisma.TransactionClient,
     payment: { id: string; storeId: string; orderId: string },
-    order: { id: string; orderNumber: string; status: OrderStatus },
+    order: { id: string; orderNumber: string; status: OrderStatus; paymentStatus: OrderPaymentStatus },
     event: ProviderWebhookEvent,
     eventId: string,
   ): Promise<void> {
@@ -200,6 +224,19 @@ export class PaymobWebhookService {
     // Inventory owns the reservation lifecycle — payment only calls the
     // consumption primitive. Idempotent: already-CONSUMED reservations skip.
     await this.reservations.consumeAllForOrderTx(tx, payment.storeId, order.id);
+
+    // Phase 27 — order-level payment status: an online payment confirmed by the
+    // provider marks the order PAID (Part 6). Guarded UNPAID -> PAID; a COD
+    // order (which has no Paymob payment) is never touched by this path.
+    if (order.paymentStatus === OrderPaymentStatus.UNPAID) {
+      await this.orders.transitionPaymentStatus(
+        tx,
+        payment.storeId,
+        order.id,
+        OrderPaymentStatus.UNPAID,
+        OrderPaymentStatus.PAID,
+      );
+    }
 
     // Order lifecycle stays with the Orders domain: guarded PENDING->CONFIRMED.
     if (order.status === OrderStatus.PENDING) {
@@ -253,7 +290,7 @@ export class PaymobWebhookService {
   private async applyFailure(
     tx: Prisma.TransactionClient,
     payment: { id: string; storeId: string; orderId: string },
-    order: { id: string; orderNumber: string },
+    order: { id: string; orderNumber: string; paymentStatus: OrderPaymentStatus },
     event: ProviderWebhookEvent,
     eventId: string,
   ): Promise<void> {
@@ -279,6 +316,19 @@ export class PaymobWebhookService {
 
     // Idempotent release (guarded ACTIVE->RELEASED); CONSUMED reservations skip.
     await this.reservations.releaseAllForOrderTx(tx, payment.storeId, order.id);
+
+    // Phase 27 — order-level payment status: a provider-confirmed failure marks
+    // the order FAILED (Part 6/7). Guarded UNPAID -> FAILED so the customer can
+    // retry with a new payment session without losing the order.
+    if (order.paymentStatus === OrderPaymentStatus.UNPAID) {
+      await this.orders.transitionPaymentStatus(
+        tx,
+        payment.storeId,
+        order.id,
+        OrderPaymentStatus.UNPAID,
+        OrderPaymentStatus.FAILED,
+      );
+    }
 
     await this.audit.create(tx, {
       storeId: payment.storeId,

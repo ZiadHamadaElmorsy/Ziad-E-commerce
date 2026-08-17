@@ -18,6 +18,8 @@ export default function NewCategoryPage() {
   const toast = useToast();
 
   const [name, setName] = useState('');
+  const [nameAr, setNameAr] = useState('');
+  const [nameEn, setNameEn] = useState('');
   const [description, setDescription] = useState('');
   const [nameError, setNameError] = useState<string | undefined>();
   const [formError, setFormError] = useState<string | null>(null);
@@ -37,6 +39,8 @@ export default function NewCategoryPage() {
     try {
       const result = await catalogApi.createCategory({
         name: name.trim(),
+        nameAr: nameAr.trim() || undefined,
+        nameEn: nameEn.trim() || undefined,
         description: description.trim() || undefined,
       });
       toast.success(t('categories.new.createdToast'));
@@ -78,6 +82,31 @@ export default function NewCategoryPage() {
                 onChange={(event) => setName(event.target.value)}
                 placeholder="T-Shirts"
                 autoFocus
+              />
+            </Field>
+            <Field
+              label={t('categories.nameAr')}
+              htmlFor="name-ar"
+              hint={t('products.details.nameArHint')}
+            >
+              <Input
+                id="name-ar"
+                value={nameAr}
+                onChange={(event) => setNameAr(event.target.value)}
+                dir="rtl"
+                placeholder="تيشيرتات"
+              />
+            </Field>
+            <Field
+              label={t('categories.nameEn')}
+              htmlFor="name-en"
+              hint={t('products.details.nameEnHint')}
+            >
+              <Input
+                id="name-en"
+                value={nameEn}
+                onChange={(event) => setNameEn(event.target.value)}
+                placeholder="T-Shirts"
               />
             </Field>
             <Field

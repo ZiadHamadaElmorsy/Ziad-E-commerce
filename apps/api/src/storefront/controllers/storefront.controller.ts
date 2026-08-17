@@ -2,6 +2,7 @@ import { Controller, Get, Param, Query, Req } from '@nestjs/common';
 import type { Request } from 'express';
 import { Public } from '../../common/decorators/public.decorator';
 import { ListStorefrontCategoriesQueryDto } from '../dto/list-storefront-categories-query.dto';
+import { ListStorefrontProductMediaQueryDto } from '../dto/list-storefront-product-media-query.dto';
 import { ListStorefrontProductsQueryDto } from '../dto/list-storefront-products-query.dto';
 import { StorefrontService } from '../services/storefront.service';
 
@@ -11,6 +12,7 @@ import { StorefrontService } from '../services/storefront.service';
  *   GET /api/v1/storefront
  *   GET /api/v1/storefront/products
  *   GET /api/v1/storefront/products/:slug
+ *   GET /api/v1/storefront/products/:slug/media   (Phase 26 — paginated gallery)
  *   GET /api/v1/storefront/categories
  *   GET /api/v1/storefront/categories/:slug
  *   GET /api/v1/storefront/pages/:slug
@@ -43,6 +45,17 @@ export class StorefrontController {
   async getProductBySlug(@Req() request: Request, @Param('slug') slug: string) {
     const product = await this.storefrontService.getProductBySlug(request, slug);
     return { data: product };
+  }
+
+  @Public()
+  @Get('products/:slug/media')
+  async getProductMedia(
+    @Req() request: Request,
+    @Param('slug') slug: string,
+    @Query() query: ListStorefrontProductMediaQueryDto,
+  ) {
+    const { items, meta } = await this.storefrontService.listProductMedia(request, slug, query);
+    return { data: items, meta };
   }
 
   @Public()

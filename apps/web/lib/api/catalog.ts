@@ -1,17 +1,21 @@
 import { api, toQueryString } from './client';
 import type {
+  AttachProductMediaInput,
   CategoryView,
   CreateCategoryInput,
   CreateProductInput,
   CreateVariantInput,
   Envelope,
   ListCategoriesParams,
+  ListProductMediaParams,
   ListProductsParams,
   Paginated,
   ProductLinkInput,
+  ProductMediaView,
   ProductView,
   UpdateCategoryInput,
   UpdateProductInput,
+  UpdateProductMediaInput,
   UpdateVariantInput,
   VariantView,
 } from './types';
@@ -41,9 +45,19 @@ export const catalogApi = {
   archiveProduct: (productId: string) =>
     api.post<Envelope<ProductView>>(`/products/${productId}/archive`),
 
+  // --- Product gallery (Phase 26) ---
+  listProductMedia: (productId: string, params: ListProductMediaParams = {}) =>
+    api.get<Paginated<ProductMediaView>>(`/products/${productId}/media${toQueryString({ ...params })}`),
+
+  updateProductMedia: (productId: string, mediaId: string, input: UpdateProductMediaInput) =>
+    api.patch<Envelope<ProductView>>(`/products/${productId}/media/${mediaId}`, input),
+
+  reorderProductMedia: (productId: string, mediaIds: string[]) =>
+    api.put<Envelope<ProductView>>(`/products/${productId}/media/order`, { order: mediaIds }),
+
   // --- Product images (product_media association) ---
-  attachMedia: (productId: string, mediaId: string) =>
-    api.post<Envelope<ProductView>>(`/products/${productId}/media/${mediaId}`),
+  attachMedia: (productId: string, mediaId: string, input: AttachProductMediaInput = {}) =>
+    api.post<Envelope<ProductView>>(`/products/${productId}/media/${mediaId}`, input),
 
   removeMedia: (productId: string, mediaId: string) =>
     api.delete<void>(`/products/${productId}/media/${mediaId}`),

@@ -436,6 +436,67 @@ export class InventoryReservationService {
   }
 
   /**
+   * Restocks the order's purchased variants after a returned/rejected shipment
+   * (Phase 28 — F-1). Runs INSIDE the caller's tenant-bound transaction, after
+   * the shipment's exactly-once `restocked_at` guard was claimed, so it is
+   * executed at most once per shipment regardless of how many terminal-failure
+   * events arrive (REJECTED → RETURNED double-fire safe).
+   *
+   * For each order item with a variant id: a guarded `on_hand += quantity`
+   * (guardedRestock) followed by an append-only RETURN movement (quantity is
+   * positive; `on_hand_after` reflects the restored stock). Items without a
+   * variant reference (FK SetNull after a variant deletion) are skipped.
+   */
+  async restockReturnedItemsTx(
+    tx: Prisma.TransactionClient,
+    storeId: string,
+    items: Array<{ variantId: string | null; quantity: number }>,
+    reference: { type: string; id: string },
+  ): Promise<{ restocked: number }> {
+    let restocked = 0;
+
+    for (const item of items) {
+      if (!item.variantId) {
+        continue; // item's variant was deleted (FK SetNull) — nothing to restore
+      }
+      if (!Number.isInteger(item.quantity) || item.quantity <= 0) {
+        throw new ValidationError('Return quantity must be a positive integer.');
+      }
+
+      const { count } = await this.inventory.guardedRestock(
+        tx,
+        storeId,
+        item.variantId,
+        item.quantity,
+      );
+      if (count === 0) {
+        throw new ConflictError('The inventory row for the returned item could not be found.');
+      }
+
+      const current = await this.inventory.findByVariantTx(tx, storeId, item.variantId);
+      if (!current) {
+        throw new NotFoundError('The inventory row could not be found.');
+      }
+
+      await this.movements.create(tx, {
+        storeId,
+        variantId: item.variantId,
+        movementType: MovementType.RETURN,
+        quantity: item.quantity,
+        referenceType: reference.type,
+        referenceId: reference.id,
+        reason: 'Shipment returned — stock restored.',
+        onHandAfter: current.onHandQuantity,
+        reservedAfter: current.reservedQuantity,
+      });
+
+      restocked += 1;
+    }
+
+    return { restocked };
+  }
+
+  /**
    * Reservation expiration sweep (docs/DATABASE.md §14.2/§28.6).
    *
    * Expiration is NOT a state: expired ACTIVE reservations are transitioned

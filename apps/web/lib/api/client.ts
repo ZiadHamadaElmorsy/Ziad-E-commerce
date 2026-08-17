@@ -48,6 +48,7 @@ async function refreshAccessToken(): Promise<string | null> {
   const { data } = await supabase.auth.refreshSession();
   return data.session?.access_token ?? null;
 }
+export { refreshAccessToken };
 
 async function doFetch(path: string, options: ApiRequestOptions, token: string): Promise<Response> {
   return fetch(`${appConfig.apiUrl}${path}`, {

@@ -1,6 +1,9 @@
 import { ConfigService } from '@nestjs/config';
 import {
   CartStatus,
+  OrderChannel,
+  OrderPaymentMethod,
+  OrderPaymentStatus,
   OrderStatus,
   Prisma,
   ProductStatus,
@@ -511,6 +514,24 @@ describe('CheckoutService', () => {
         'order-1',
       );
       expect(carts.complete).toHaveBeenCalledWith(tx, 'store-1', 'cart-1');
+    });
+
+    it('creates a COD order with paymentMethod=COD and paymentStatus=UNPAID (Phase 27 — Part 6/7)', async () => {
+      withActiveTenant();
+      stubHappyPath();
+
+      await service.createCheckout(buildDto(), 'guest-token-1', undefined, undefined, undefined, OrderChannel.ONLINE_PAYMENT, OrderPaymentMethod.COD);
+
+      // COD orders are created UNPAID (Part 6) — the order being created does
+      // NOT mean it is paid; the carrier collects the cash on delivery.
+      expect(orders.create).toHaveBeenCalledWith(
+        tx,
+        expect.objectContaining({
+          paymentMethod: OrderPaymentMethod.COD,
+          paymentStatus: OrderPaymentStatus.UNPAID,
+        }),
+        expect.any(Array),
+      );
     });
 
     it('reuses an existing store-scoped customer by email instead of creating one', async () => {

@@ -19,6 +19,8 @@ export default function NewProductPage() {
   const toast = useToast();
 
   const [name, setName] = useState('');
+  const [nameAr, setNameAr] = useState('');
+  const [nameEn, setNameEn] = useState('');
   const [description, setDescription] = useState('');
   const [nameError, setNameError] = useState<string | undefined>();
   const [formError, setFormError] = useState<string | null>(null);
@@ -38,6 +40,8 @@ export default function NewProductPage() {
     try {
       const result = await catalogApi.createProduct({
         name: name.trim(),
+        nameAr: nameAr.trim() || undefined,
+        nameEn: nameEn.trim() || undefined,
         description: description.trim() || undefined,
         status: 'DRAFT',
       });
@@ -80,6 +84,33 @@ export default function NewProductPage() {
                 onChange={(event) => setName(event.target.value)}
                 placeholder="Classic T-Shirt"
                 autoFocus
+              />
+            </Field>
+
+            <Field
+              label={t('products.details.nameAr')}
+              htmlFor="name-ar"
+              hint={t('products.details.nameArHint')}
+            >
+              <Input
+                id="name-ar"
+                value={nameAr}
+                onChange={(event) => setNameAr(event.target.value)}
+                dir="rtl"
+                placeholder="تي شيرت كلاسيك"
+              />
+            </Field>
+
+            <Field
+              label={t('products.details.nameEn')}
+              htmlFor="name-en"
+              hint={t('products.details.nameEnHint')}
+            >
+              <Input
+                id="name-en"
+                value={nameEn}
+                onChange={(event) => setNameEn(event.target.value)}
+                placeholder="Classic T-Shirt"
               />
             </Field>
 

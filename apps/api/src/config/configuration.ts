@@ -59,6 +59,23 @@ export interface PaymobConfig {
  * Used to resolve the Store from the public storefront Host header subdomain.
  */
 
+/**
+ * Bosta shipping provider configuration (Phase 27 — shipping integration).
+ * All values are optional at boot and the provider FAILS CLOSED at call time
+ * when credentials are missing (mirroring the Paymob provider). Secrets are
+ * only ever read from the environment; never exposed to the frontend.
+ */
+export interface BostaConfig {
+  /** Bosta API base URL (defaults to https://api.bosta.co). */
+  apiUrl?: string;
+  /** Bosta API key (BOSTA_API_KEY) — used for create/get/cancel/label calls. */
+  apiKey?: string;
+  /** Bosta webhook HMAC secret (BOSTA_WEBHOOK_SECRET) — webhook signature verification. */
+  webhookSecret?: string;
+  /** Optional public webhook URL registered with Bosta (BOSTA_WEBHOOK_URL). */
+  webhookUrl?: string;
+}
+
 /** Rate limiting configuration (Phase 21 — production hardening). */
 export interface RateLimitConfig {
   /** Master switch; disabled by default under NODE_ENV=test to keep suites stable. */
@@ -153,6 +170,23 @@ export interface PerformanceConfig {
   storefrontCacheTtlMs: number;
 }
 
+/**
+ * Phase 28 — F-3: payment-event retry/reprocessing sweep knobs. RECEIVED/ERROR
+ * `payment_events` rows are re-applied (idempotent guarded transitions) by a
+ * lease-coordinated background job so a transient webhook failure can never
+ * leave a paid order unconfirmed indefinitely.
+ */
+export interface PaymentRetryConfig {
+  /** Master switch for the retry sweep (PAYMENT_RETRY_ENABLED). */
+  enabled: boolean;
+  /** Retry interval in milliseconds (PAYMENT_RETRY_INTERVAL_MS). */
+  intervalMs: number;
+  /** Batch size per run (PAYMENT_RETRY_BATCH_SIZE). */
+  batchSize: number;
+  /** Distributed lease TTL for the retry sweep (PAYMENT_RETRY_LEASE_TTL_MS). */
+  leaseTtlMs: number;
+}
+
 export interface AppConfiguration {
   nodeEnv: string;
   port: number;
@@ -168,9 +202,12 @@ export interface AppConfiguration {
   rlsEnforcementRole?: string;
   rateLimit: RateLimitConfig;
   expiry: ExpiryConfig;
+  /** Phase 28 — F-3: payment-event retry/reprocessing sweep. */
+  paymentRetry: PaymentRetryConfig;
   media: MediaConfig;
   supabase: SupabaseConfig;
   paymob: PaymobConfig;
+  bosta: BostaConfig;
   /** Phase 23 — deployment security knobs (HSTS). */
   security: SecurityConfig;
   /** Phase 23 — reverse-proxy trust for correct client IPs (rate limiting). */
@@ -271,6 +308,15 @@ export default (): AppConfiguration => {
       batchSize: parseIntOr(process.env.RESERVATION_EXPIRY_BATCH_SIZE, 100),
       sweepLeaseTtlMs: parseIntOr(process.env.RESERVATION_EXPIRY_LEASE_TTL_MS, 10 * 60 * 1000),
     },
+    // Phase 28 — F-3: payment-event retry/reprocessing sweep (lease-coordinated
+    // on job_leases; disabled under NODE_ENV=test so suites stay deterministic).
+    paymentRetry: {
+      enabled:
+        nodeEnv !== 'test' && parseBoolean(process.env.PAYMENT_RETRY_ENABLED, false),
+      intervalMs: parseIntOr(process.env.PAYMENT_RETRY_INTERVAL_MS, 5 * 60 * 1000),
+      batchSize: parseIntOr(process.env.PAYMENT_RETRY_BATCH_SIZE, 20),
+      leaseTtlMs: parseIntOr(process.env.PAYMENT_RETRY_LEASE_TTL_MS, 10 * 60 * 1000),
+    },
     security: {
       // HSTS must be explicitly enabled on an HTTPS-terminated production
       // deployment. Never send it from an HTTP server.
@@ -318,6 +364,12 @@ export default (): AppConfiguration => {
       publicKey: process.env.PAYMOB_PUBLIC_KEY,
       hmacSecret: process.env.PAYMOB_HMAC_SECRET,
       webhookUrl: process.env.PAYMOB_WEBHOOK_URL,
+    },
+    bosta: {
+      apiUrl: process.env.BOSTA_API_URL,
+      apiKey: process.env.BOSTA_API_KEY,
+      webhookSecret: process.env.BOSTA_WEBHOOK_SECRET,
+      webhookUrl: process.env.BOSTA_WEBHOOK_URL,
     },
   };
 };

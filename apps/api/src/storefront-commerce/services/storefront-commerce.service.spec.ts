@@ -42,6 +42,7 @@ describe('StorefrontCommerceService', () => {
   const storage = { downloadObject: jest.fn() };
   const settings = { readWhatsAppSettings: jest.fn() };
   const whatsapp = { createWhatsAppOrder: jest.fn() };
+  const shipments = { getCustomerTracking: jest.fn() };
   const config = { get: jest.fn() };
 
   beforeEach(() => {
@@ -59,6 +60,7 @@ describe('StorefrontCommerceService', () => {
       storage as never,
       settings as never,
       whatsapp as never,
+      shipments as never,
       config as never,
     );
   });
@@ -126,6 +128,7 @@ describe('StorefrontCommerceService', () => {
         'store-1',
         'ACTIVE',
         'ONLINE_PAYMENT',
+        'ONLINE',
       );
       expect(result).toEqual({ orderId: 'order-1' });
     });
@@ -171,6 +174,9 @@ describe('StorefrontCommerceService', () => {
     const orderRow = {
       id: 'order-1',
       orderNumber: 'ORD-2026-000001',
+      channel: 'ONLINE_PAYMENT',
+      paymentMethod: 'ONLINE',
+      paymentStatus: 'UNPAID',
       status: 'PENDING',
       currency: 'EGP',
       subtotal: 1000n,
@@ -198,16 +204,20 @@ describe('StorefrontCommerceService', () => {
 
       expect(orders.findWithDetails).toHaveBeenCalledWith('store-1', 'order-1');
       expect(result.orderNumber).toBe('ORD-2026-000001');
-      expect(result.paymentStatus).toBe('SUCCEEDED');
+      // Phase 27 — the order-level payment status (UNPAID) is the authoritative
+      // customer-facing state, independent of the attempt-level payment record.
+      expect(result.paymentStatus).toBe('UNPAID');
     });
 
-    it('returns the order without a payment when none exists yet (best-effort)', async () => {
+    it('returns the order without a payment record when none exists yet (best-effort)', async () => {
       orders.findWithDetails.mockResolvedValue(orderRow);
       payments.getPayment.mockRejectedValue(new NotFoundError('No payment exists for this order.'));
 
       const result = await service.getOrder(request as never, 'order-1');
 
-      expect(result.paymentStatus).toBeNull();
+      // The order-level payment status still renders (UNPAID); only the
+      // provider-attempt failure message is absent.
+      expect(result.paymentStatus).toBe('UNPAID');
       expect(result.paymentFailureMessage).toBeNull();
     });
 

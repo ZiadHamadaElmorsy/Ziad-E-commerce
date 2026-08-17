@@ -6,6 +6,7 @@ import type {
   OrderSummaryView,
   OrderView,
   Paginated,
+  ShipmentView,
 } from './types';
 
 /**
@@ -20,4 +21,26 @@ export const ordersApi = {
 
   updateOrderStatus: (orderId: string, status: OrderStatus) =>
     api.patch<Envelope<OrderView>>(`/orders/${orderId}/status`, { status }),
+
+  // --- Shipping (Phase 27 — Part 10) -----------------------------------------
+
+  /** POST /orders/:orderId/shipment — idempotent create shipment. */
+  createShipment: (orderId: string) =>
+    api.post<Envelope<ShipmentView>>(`/orders/${orderId}/shipment`),
+
+  /** GET /orders/:orderId/shipment — merchant shipment detail. */
+  getShipment: (orderId: string) =>
+    api.get<Envelope<ShipmentView>>(`/orders/${orderId}/shipment`),
+
+  /** POST /orders/:orderId/shipment/refresh — re-fetch provider tracking. */
+  refreshShipment: (orderId: string) =>
+    api.post<Envelope<ShipmentView>>(`/orders/${orderId}/shipment/refresh`),
+
+  /** POST /orders/:orderId/shipment/cancel — cancel the shipment. */
+  cancelShipment: (orderId: string) =>
+    api.post<Envelope<ShipmentView>>(`/orders/${orderId}/shipment/cancel`),
+
+  /** GET /orders/:orderId/shipment/label — print shipping label. */
+  getShipmentLabel: (orderId: string) =>
+    api.get<Envelope<{ labelUrl: string } | null>>(`/orders/${orderId}/shipment/label`),
 };

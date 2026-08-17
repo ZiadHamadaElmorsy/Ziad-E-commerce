@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useI18n } from '@/lib/i18n/i18n-context';
 import { useStorefront } from '@/lib/storefront/storefront-context';
-import { storeProductsPath } from '@/lib/storefront/paths';
+import { storeOrderTrackingPath, storeProductsPath } from '@/lib/storefront/paths';
 import { getStorefrontOrder } from '@/lib/api/cart';
 import { ApiError } from '@/lib/api/client';
 import { getOrderLookupToken } from '@/lib/storefront/order-token';
@@ -51,14 +51,18 @@ export default function StoreOrderPage() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void load().then(async (first) => {
       if (cancelled) return;
-      if (first && (first.paymentStatus === 'PENDING' || first.paymentStatus === 'PROCESSING')) {
+      if (first && first.paymentStatus === 'UNPAID') {
         const timer = window.setInterval(async () => {
           pollCount.current += 1;
           const current = await load();
           if (cancelled) return;
+          // Phase 27 — the order-level payment status is PAID/FAILED once the
+          // provider webhook settles (UNPAID while awaiting the attempt).
           const settled =
             current &&
-            (current.paymentStatus === 'SUCCEEDED' || current.paymentStatus === 'FAILED');
+            (current.paymentStatus === 'PAID' ||
+              current.paymentStatus === 'FAILED' ||
+              current.paymentStatus === 'REFUNDED');
           if (settled || pollCount.current >= POLL_ATTEMPTS) {
             window.clearInterval(timer);
           }
@@ -83,9 +87,12 @@ export default function StoreOrderPage() {
 
   const shippingAddress = order.shippingAddress as Record<string, string>;
   const isWhatsApp = order.channel === 'WHATSAPP';
+  const isCod = order.paymentMethod === 'COD';
   const channelLabel = isWhatsApp
     ? t('storefront.channel.WHATSAPP')
-    : t('storefront.channel.ONLINE_PAYMENT');
+    : isCod
+      ? t('storefront.cashOnDelivery')
+      : t('storefront.channel.ONLINE_PAYMENT');
   const paymentLabel =
     order.paymentStatus !== null
       ? tStatus(order.paymentStatus)
@@ -132,6 +139,27 @@ export default function StoreOrderPage() {
         <p className="sf-alert sf-alert--info" data-testid="whatsapp-confirmation-note">
           {t('storefront.unpaidDesc')}
         </p>
+      ) : null}
+
+      {isCod ? (
+        <div className="sf-payment" data-testid="cod-note">
+          <h2>{t('storefront.payment')}</h2>
+          <dl className="sf-meta">
+            <div>
+              <dt>{t('storefront.paymentMethod')}</dt>
+              <dd>{t('storefront.cashOnDelivery')}</dd>
+            </div>
+            <div>
+              <dt>{t('storefront.amountToPayOnDelivery')}</dt>
+              <dd>
+                <strong data-testid="cod-amount">
+                  <Price value={order.grandTotal} />
+                </strong>
+              </dd>
+            </div>
+          </dl>
+          <p className="sf-alert sf-alert--info">{t('storefront.codPayWhenArrives')}</p>
+        </div>
       ) : null}
 
       {order.paymentFailureMessage ? (
@@ -195,7 +223,10 @@ export default function StoreOrderPage() {
       </section>
 
       <div className="sf-payment__footer">
-        <Link href={storeProductsPath(slug)} className="sf-btn sf-btn--primary">
+        <Link href={storeOrderTrackingPath(slug, order.id)} className="sf-btn sf-btn--primary">
+          {t('storefront.trackOrder')}
+        </Link>
+        <Link href={storeProductsPath(slug)} className="sf-btn sf-btn--ghost">
           {t('storefront.continueShopping')}
         </Link>
       </div>

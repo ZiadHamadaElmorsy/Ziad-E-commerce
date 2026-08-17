@@ -1,4 +1,9 @@
-import { OrderChannel, OrderStatus } from '@prisma/client';
+import {
+  OrderChannel,
+  OrderPaymentMethod,
+  OrderPaymentStatus,
+  OrderStatus,
+} from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateOrderInput, CreateOrderItemInput, OrderRepository } from './order.repository';
 
@@ -89,6 +94,8 @@ describe('OrderRepository', () => {
       storeId: 'store-1',
       orderNumber: 'ORD-2026-000001',
       channel: OrderChannel.ONLINE_PAYMENT,
+      paymentMethod: OrderPaymentMethod.ONLINE,
+      paymentStatus: OrderPaymentStatus.UNPAID,
       customerId: 'customer-1',
       status: OrderStatus.PENDING,
       currency: 'EGP',

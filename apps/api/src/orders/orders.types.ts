@@ -3,6 +3,8 @@ import {
   Order,
   OrderChannel,
   OrderItem,
+  OrderPaymentMethod,
+  OrderPaymentStatus,
   OrderStatus,
   ReservationStatus,
 } from '@prisma/client';
@@ -55,6 +57,10 @@ export interface OrderView {
   orderNumber: string;
   /** Acquisition/payment channel (ONLINE_PAYMENT | WHATSAPP) — Phase 22. */
   channel: OrderChannel;
+  /** How the order's payment is settled (ONLINE | COD) — Phase 27. */
+  paymentMethod: OrderPaymentMethod;
+  /** Order-level payment status (PAID/UNPAID/FAILED/REFUNDED) — Phase 27. */
+  paymentStatus: OrderPaymentStatus;
   status: OrderStatus;
   currency: string;
   subtotal: number;
@@ -81,6 +87,10 @@ export interface OrderSummaryView {
   orderNumber: string;
   /** Acquisition/payment channel (ONLINE_PAYMENT | WHATSAPP) — Phase 22. */
   channel: OrderChannel;
+  /** How the order's payment is settled (ONLINE | COD) — Phase 27. */
+  paymentMethod: OrderPaymentMethod;
+  /** Order-level payment status (PAID/UNPAID/FAILED/REFUNDED) — Phase 27. */
+  paymentStatus: OrderPaymentStatus;
   status: OrderStatus;
   currency: string;
   grandTotal: number;
@@ -117,6 +127,8 @@ export function toOrderView(order: OrderWithDetails): OrderView {
     id: order.id,
     orderNumber: order.orderNumber,
     channel: order.channel,
+    paymentMethod: order.paymentMethod,
+    paymentStatus: order.paymentStatus,
     status: order.status,
     currency: order.currency,
     subtotal: Number(order.subtotal),
@@ -143,6 +155,8 @@ export function toOrderSummaryView(order: Order): OrderSummaryView {
     id: order.id,
     orderNumber: order.orderNumber,
     channel: order.channel,
+    paymentMethod: order.paymentMethod,
+    paymentStatus: order.paymentStatus,
     status: order.status,
     currency: order.currency,
     grandTotal: Number(order.grandTotal),

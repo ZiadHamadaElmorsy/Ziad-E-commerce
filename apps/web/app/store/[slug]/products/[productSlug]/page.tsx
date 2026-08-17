@@ -5,20 +5,23 @@ import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useI18n } from '@/lib/i18n/i18n-context';
 import { useStorefront } from '@/lib/storefront/storefront-context';
-import { storeProductsPath } from '@/lib/storefront/paths';
+import { storeCategoryPath, storeProductsPath } from '@/lib/storefront/paths';
 import { storefrontApi } from '@/lib/api/storefront';
 import { ApiError } from '@/lib/api/client';
 import type { StorefrontProduct, StorefrontVariant } from '@/lib/storefront/types';
-import { StorefrontImage } from '@/components/storefront/StorefrontImage';
 import { Price } from '@/components/storefront/Price';
 import { StorefrontError, StorefrontLoading } from '@/components/storefront/StorefrontStates';
+import { StorefrontGallery } from '@/components/storefront/StorefrontGallery';
 import { useToast } from '@/components/ui/Toast';
 
 /**
- * Storefront product details (Phase 19). Real catalog data via the public
- * storefront API; the customer must select a valid available variant before
- * adding to cart. Quantity/pricing/availability are revalidated server-side by
- * the existing Cart API at add time.
+ * Storefront product details (Phase 19 + Phase 26).
+ *
+ * - Category breadcrumbs (Home → Category → Product).
+ * - Variant-aware gallery (color/size selectors switch images + price +
+ *   inventory without a full page reload).
+ * - Quantity/pricing/availability revalidated server-side by the Cart API at
+ *   add time.
  */
 export default function StoreProductDetailPage() {
   const params = useParams<{ slug: string; productSlug: string }>();
@@ -31,6 +34,8 @@ export default function StoreProductDetailPage() {
   const [product, setProduct] = useState<StorefrontProduct | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selectedVariantId, setSelectedVariantId] = useState<string | null>(null);
+  const [selectedColor, setSelectedColor] = useState<string | null>(null);
+  const [selectedSize, setSelectedSize] = useState<string | null>(null);
   const [quantity, setQuantity] = useState(1);
   const [adding, setAdding] = useState(false);
 
@@ -43,6 +48,10 @@ export default function StoreProductDetailPage() {
         setProduct(result.data);
         const available = result.data.variants.find((variant) => variant.available);
         setSelectedVariantId(available?.id ?? null);
+        if (available?.attributes) {
+          setSelectedColor(available.attributes.color ?? null);
+          setSelectedSize(available.attributes.size ?? null);
+        }
       })
       .catch((caught) => {
         setError(caught instanceof ApiError ? caught.message : t('storefront.loadFailed'));
@@ -54,12 +63,63 @@ export default function StoreProductDetailPage() {
     load();
   }, [load]);
 
+  // Any variant carries structured attributes → render color/size selectors.
+  const hasAttributes = useMemo(
+    () =>
+      (product?.variants ?? []).some(
+        (variant) => variant.attributes && Object.keys(variant.attributes).length > 0,
+      ),
+    [product],
+  );
+
+  /** Distinct values of an attribute across the product's variants. */
+  const attributeValues = useCallback(
+    (name: string): string[] => {
+      const values = new Set<string>();
+      for (const variant of product?.variants ?? []) {
+        const value = variant.attributes?.[name];
+        if (value) values.add(value);
+      }
+      return Array.from(values);
+    },
+    [product],
+  );
+
+  const colors = useMemo(() => attributeValues('color'), [attributeValues]);
+  const sizes = useMemo(() => attributeValues('size'), [attributeValues]);
+
+  /** The variant matching the current color/size selection (or the radio id). */
   const selectedVariant = useMemo<StorefrontVariant | null>(() => {
-    if (!product || !selectedVariantId) return null;
-    return product.variants.find((variant) => variant.id === selectedVariantId) ?? null;
-  }, [product, selectedVariantId]);
+    if (!product) return null;
+    if (!hasAttributes) {
+      return product.variants.find((variant) => variant.id === selectedVariantId) ?? null;
+    }
+    const candidates = product.variants.filter((variant) => {
+      if (!variant.attributes) return false;
+      if (selectedColor && variant.attributes.color !== selectedColor) return false;
+      if (selectedSize && variant.attributes.size !== selectedSize) return false;
+      return true;
+    });
+    return candidates.find((variant) => variant.available) ?? candidates[0] ?? null;
+  }, [product, hasAttributes, selectedVariantId, selectedColor, selectedSize]);
 
   const anyAvailable = product?.variants.some((variant) => variant.available) ?? false;
+
+  const selectColor = (color: string) => {
+    setSelectedColor(color);
+    const match = product?.variants.find(
+      (variant) => variant.attributes?.color === color && (!selectedSize || variant.attributes.size === selectedSize),
+    );
+    if (match) setSelectedVariantId(match.id);
+  };
+
+  const selectSize = (size: string) => {
+    setSelectedSize(size);
+    const match = product?.variants.find(
+      (variant) => variant.attributes?.size === size && (!selectedColor || variant.attributes.color === selectedColor),
+    );
+    if (match) setSelectedVariantId(match.id);
+  };
 
   const handleAddToCart = async () => {
     if (!selectedVariant) return;
@@ -82,32 +142,43 @@ export default function StoreProductDetailPage() {
     return <StorefrontLoading />;
   }
 
-  const cover = product.images[0] ?? null;
   const lowest = Math.min(...product.variants.map((variant) => variant.price));
   const highest = Math.max(...product.variants.map((variant) => variant.price));
+  const primaryCategory = product.categories[0] ?? null;
 
   return (
     <div className="sf-page">
       <p className="sf-breadcrumbs">
         <Link href={storeProductsPath(slug)}>{t('storefront.products')}</Link>
+        {primaryCategory ? (
+          <>
+            <span aria-hidden="true"> / </span>
+            <Link href={storeCategoryPath(slug, primaryCategory.slug)}>
+              {primaryCategory.name}
+            </Link>
+          </>
+        ) : null}
         <span aria-hidden="true"> / </span>
-        <span>{product.name}</span>
+        <span aria-current="page">{product.name}</span>
       </p>
 
       <div className="sf-pdp">
         <div className="sf-pdp__gallery">
-          {cover ? (
-            <StorefrontImage mediaId={cover.id} alt={cover.altText ?? product.name} className="sf-pdp__cover" />
-          ) : (
-            <div className="sf-image sf-image--placeholder sf-pdp__cover" />
-          )}
+          <StorefrontGallery
+            productSlug={product.slug}
+            productName={product.name}
+            initialImages={product.images}
+            totalImages={product.totalImages}
+            selectedVariantId={selectedVariant?.id ?? null}
+          />
         </div>
 
         <div className="sf-pdp__info">
-          <h1>{product.name}</h1>
-
+          <h1 className="sf-pdp__title">{product.name}</h1>
           <p className="sf-pdp__price">
-            {product.variants.length > 1 ? (
+            {selectedVariant ? (
+              <Price value={selectedVariant.price} />
+            ) : product.variants.length > 1 ? (
               <>
                 <Price value={lowest} /> — <Price value={highest} />
               </>
@@ -117,8 +188,78 @@ export default function StoreProductDetailPage() {
           </p>
 
           {product.description ? <p className="sf-pdp__desc">{product.description}</p> : null}
+          {/* Attribute selectors (color/size) — Phase 26 */}
+          {hasAttributes ? (
+            <>
+              {colors.length > 0 ? (
+                <fieldset className="sf-fieldset">
+                  <legend>{t('storefront.selectColor')}</legend>
+                  <div className="sf-options" role="radiogroup" aria-label={t('storefront.selectColor')}>
+                    {colors.map((color) => {
+                      const availableInColor = product.variants.some(
+                        (variant) =>
+                          variant.attributes?.color === color &&
+                          (!selectedSize || variant.attributes.size === selectedSize) &&
+                          variant.available,
+                      );
+                      const selected = selectedColor === color;
+                      return (
+                        <button
+                          key={color}
+                          type="button"
+                          role="radio"
+                          aria-checked={selected}
+                          disabled={!availableInColor}
+                          className={[
+                            'sf-option',
+                            selected ? 'sf-option--selected' : '',
+                            availableInColor ? '' : 'sf-option--disabled',
+                          ].join(' ')}
+                          onClick={() => selectColor(color)}
+                        >
+                          {color}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </fieldset>
+              ) : null}
 
-          {product.variants.length > 1 ? (
+              {sizes.length > 0 ? (
+                <fieldset className="sf-fieldset">
+                  <legend>{t('storefront.selectSize')}</legend>
+                  <div className="sf-options" role="radiogroup" aria-label={t('storefront.selectSize')}>
+                    {sizes.map((size) => {
+                      const availableInSize = product.variants.some(
+                        (variant) =>
+                          variant.attributes?.size === size &&
+                          (!selectedColor || variant.attributes.color === selectedColor) &&
+                          variant.available,
+                      );
+                      const selected = selectedSize === size;
+                      return (
+                        <button
+                          key={size}
+                          type="button"
+                          role="radio"
+                          aria-checked={selected}
+                          disabled={!availableInSize}
+                          className={[
+                            'sf-option',
+                            selected ? 'sf-option--selected' : '',
+                            availableInSize ? '' : 'sf-option--disabled',
+                          ].join(' ')}
+                          onClick={() => selectSize(size)}
+                        >
+                          {size}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </fieldset>
+              ) : null}
+            </>
+          ) : product.variants.length > 1 ? (
             <fieldset className="sf-fieldset">
               <legend>{t('storefront.selectVariant')}</legend>
               <div className="sf-variants" role="radiogroup" aria-label={t('storefront.selectVariant')}>
@@ -152,7 +293,9 @@ export default function StoreProductDetailPage() {
             </fieldset>
           ) : null}
 
-          {!anyAvailable ? (
+          {selectedVariant && !selectedVariant.available ? (
+            <p className="sf-alert sf-alert--danger">{t('storefront.outOfStock')}</p>
+          ) : !anyAvailable ? (
             <p className="sf-alert sf-alert--danger">{t('storefront.outOfStock')}</p>
           ) : null}
 
@@ -174,7 +317,7 @@ export default function StoreProductDetailPage() {
             <button
               type="button"
               className="sf-btn sf-btn--primary sf-btn--lg"
-              disabled={!selectedVariant || !anyAvailable || adding}
+              disabled={!selectedVariant || !selectedVariant.available || adding}
               onClick={() => void handleAddToCart()}
             >
               {adding ? t('common.saving') : t('storefront.addToCart')}
@@ -184,20 +327,8 @@ export default function StoreProductDetailPage() {
           <p className="sf-muted sf-text-sm">{t('storefront.checkoutNote')}</p>
         </div>
       </div>
-
-      {product.images.length > 1 ? (
-        <div className="sf-pdp__thumbs">
-          {product.images.map((image) => (
-            <StorefrontImage
-              key={image.id}
-              mediaId={image.id}
-              alt={image.altText ?? product.name}
-              className="sf-pdp__thumb"
-            />
-          ))}
-        </div>
-      ) : null}
     </div>
   );
 }
+
 

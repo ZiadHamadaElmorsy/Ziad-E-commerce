@@ -1,30 +1,43 @@
 import { ProductStatus } from '@prisma/client';
-import { IsEnum, IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
+import {
+  IsEnum,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  MaxLength,
+} from 'class-validator';
 
 /**
  * POST /api/v1/products request body (docs/API-SPEC.md §16 "Create Product").
  *
- * The API-SPEC request is exactly:
- *
  *   { "name": "Classic T-Shirt", "description": "Classic cotton T-shirt",
+ *     "nameAr": "تي شيرت كلاسيك", "nameEn": "Classic T-Shirt",
  *     "status": "DRAFT" }
  *
  * - `name`        required
+ * - `nameAr`      optional Arabic label
+ * - `nameEn`      optional English label
  * - `description` optional
- * - `status`      optional; DRAFT is the only legal initial status — the
- *   product lifecycle starts at DRAFT (docs/DOMAIN-MODEL.md §7.1) and ACTIVE
- *   is reached through the dedicated publish endpoint.
+ * - `status`      optional; DRAFT is the only legal initial status.
  *
- * `slug` is NOT accepted: it is generated from `name` (store-scoped unique,
- * docs/DATABASE.md §7.5) because the API-SPEC request has no slug field.
- * The Default ProductVariant is created atomically with the product
- * (docs/DOMAIN-MODEL.md §7.1 invariant: every product MUST have >= 1 variant).
+ * `slug` is NOT accepted: it is generated from `name` (store-scoped unique).
+ * The Default ProductVariant is created atomically with the product.
  */
 export class CreateProductDto {
   @IsString()
   @IsNotEmpty()
   @MaxLength(255)
   name!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  nameAr?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  nameEn?: string;
 
   @IsOptional()
   @IsString()

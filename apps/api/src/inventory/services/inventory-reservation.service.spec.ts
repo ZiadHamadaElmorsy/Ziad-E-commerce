@@ -1,6 +1,7 @@
 import { MovementType, ReservationStatus, VariantStatus } from '@prisma/client';
 import { RequestContextService } from '../../common/context/request-context.service';
 import {
+  ConflictError,
   InsufficientInventoryError,
   NotFoundError,
   StateTransitionError,
@@ -22,6 +23,7 @@ describe('InventoryReservationService', () => {
     guardedReserve: jest.Mock;
     guardedConsume: jest.Mock;
     guardedRelease: jest.Mock;
+    guardedRestock: jest.Mock;
   };
   let reservations: {
     create: jest.Mock;
@@ -82,6 +84,7 @@ describe('InventoryReservationService', () => {
       guardedReserve: jest.fn(),
       guardedConsume: jest.fn(),
       guardedRelease: jest.fn(),
+      guardedRestock: jest.fn(),
     };
     reservations = {
       create: jest.fn(),
@@ -564,4 +567,67 @@ describe('InventoryReservationService', () => {
       expect(reservations.transitionStatus).not.toHaveBeenCalled();
     });
   });
+
+  describe('restockReturnedItemsTx (Phase 28 — F-1)', () => {
+    it('restores on_hand per order item and writes RETURN movements', async () => {
+      inventory.guardedRestock.mockResolvedValue({ count: 1 });
+      inventory.findByVariantTx.mockResolvedValue(inventoryRow);
+
+      const result = await service.restockReturnedItemsTx(
+        {} as never,
+        'store-1',
+        [{ variantId: 'variant-1', quantity: 3 }],
+        { type: 'shipment', id: 'shipment-1' },
+      );
+
+      expect(inventory.guardedRestock).toHaveBeenCalledWith(
+        {},
+        'store-1',
+        'variant-1',
+        3,
+      );
+      expect(movements.create).toHaveBeenCalledWith(
+        {},
+        expect.objectContaining({
+          storeId: 'store-1',
+          variantId: 'variant-1',
+          movementType: MovementType.RETURN,
+          quantity: 3,
+          referenceType: 'shipment',
+          referenceId: 'shipment-1',
+          onHandAfter: inventoryRow.onHandQuantity,
+          reservedAfter: inventoryRow.reservedQuantity,
+        }),
+      );
+      expect(result).toEqual({ restocked: 1 });
+    });
+
+    it('fails closed when the inventory row is missing (guarded update count 0)', async () => {
+      inventory.guardedRestock.mockResolvedValue({ count: 0 });
+
+      await expect(
+        service.restockReturnedItemsTx(
+          {} as never,
+          'store-1',
+          [{ variantId: 'variant-1', quantity: 3 }],
+          { type: 'shipment', id: 'shipment-1' },
+        ),
+      ).rejects.toBeInstanceOf(ConflictError);
+      expect(movements.create).not.toHaveBeenCalled();
+    });
+
+    it('skips items without a variant reference (variant deleted -> FK SetNull)', async () => {
+      const result = await service.restockReturnedItemsTx(
+        {} as never,
+        'store-1',
+        [{ variantId: null, quantity: 2 }],
+        { type: 'shipment', id: 'shipment-1' },
+      );
+
+      expect(inventory.guardedRestock).not.toHaveBeenCalled();
+      expect(movements.create).not.toHaveBeenCalled();
+      expect(result).toEqual({ restocked: 0 });
+    });
+  });
 });
+

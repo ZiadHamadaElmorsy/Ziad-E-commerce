@@ -106,7 +106,7 @@ export default function CategoriesPage() {
             <tbody>
               {categories.map((category) => (
                 <tr key={category.id}>
-                  <td>
+                  <td data-label={t('categories.table.category')}>
                     <Link href={`/dashboard/categories/${category.id}`} className="link">
                       {category.name}
                     </Link>
@@ -114,11 +114,13 @@ export default function CategoriesPage() {
                       <div className="table__muted">{category.description}</div>
                     ) : null}
                   </td>
-                  <td className="table__muted">/{category.slug}</td>
-                  <td>
+                  <td className="table__muted" data-label={t('categories.table.slug')}>
+                    /{category.slug}
+                  </td>
+                  <td data-label={t('categories.table.status')}>
                     <StatusBadge status={category.status} />
                   </td>
-                  <td>
+                  <td data-label="">
                     <div className="table__actions">
                       <Link
                         href={`/dashboard/categories/${category.id}`}

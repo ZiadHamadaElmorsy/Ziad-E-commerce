@@ -60,10 +60,12 @@ const product = {
   name: 'Classic T-Shirt',
   slug: 'classic-t-shirt',
   description: 'Cotton classic',
+  categories: [],
+  totalImages: 1,
   images: [{ id: 'media-1', altText: 'Front' }],
   variants: [
-    { id: 'variant-1', name: 'Black / Medium', price: 500, available: true },
-    { id: 'variant-2', name: 'Black / Large', price: 550, available: false },
+    { id: 'variant-1', name: 'Black / Medium', attributes: { color: 'Black', size: 'M' }, price: 500, available: true },
+    { id: 'variant-2', name: 'Black / Large', attributes: { color: 'Black', size: 'L' }, price: 550, available: false },
   ],
 };
 
@@ -95,7 +97,7 @@ describe('ProductCard', () => {
         product={{
           ...product,
           variants: [
-            { id: 'variant-1', name: 'Black / M', price: 500, available: false },
+            { id: 'variant-1', name: 'Black / M', attributes: { color: 'Black', size: 'M' }, price: 500, available: false },
           ],
         }}
       />,

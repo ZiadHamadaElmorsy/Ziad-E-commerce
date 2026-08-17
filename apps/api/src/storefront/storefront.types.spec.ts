@@ -47,6 +47,7 @@ describe('Storefront types / mappers', () => {
         {
           id: 'variant-1',
           name: 'Black / Medium',
+          attributes: { color: 'Black', size: 'M' },
           price: 500n,
           status: VariantStatus.ACTIVE,
           inventory: { onHandQuantity: 10, reservedQuantity: 2 },
@@ -54,6 +55,7 @@ describe('Storefront types / mappers', () => {
         {
           id: 'variant-2',
           name: 'White / Large',
+          attributes: null,
           price: 600n,
           status: VariantStatus.ACTIVE,
           inventory: { onHandQuantity: 0, reservedQuantity: 0 },
@@ -61,6 +63,7 @@ describe('Storefront types / mappers', () => {
         {
           id: 'variant-3',
           name: 'Archived',
+          attributes: null,
           price: 700n,
           status: VariantStatus.ARCHIVED,
           inventory: { onHandQuantity: 5, reservedQuantity: 0 },
@@ -74,10 +77,24 @@ describe('Storefront types / mappers', () => {
       name: 'Classic T-Shirt',
       slug: 'classic-t-shirt',
       description: 'Cotton',
+      categories: [],
       images: [{ id: 'media-1', altText: 'Front view' }],
+      totalImages: 1,
       variants: [
-        { id: 'variant-1', name: 'Black / Medium', price: 500, available: true },
-        { id: 'variant-2', name: 'White / Large', price: 600, available: false },
+        {
+          id: 'variant-1',
+          name: 'Black / Medium',
+          attributes: { color: 'Black', size: 'M' },
+          price: 500,
+          available: true,
+        },
+        {
+          id: 'variant-2',
+          name: 'White / Large',
+          attributes: null,
+          price: 600,
+          available: false,
+        },
       ],
     });
   });
@@ -92,6 +109,7 @@ describe('Storefront types / mappers', () => {
         {
           id: 'variant-1',
           name: 'Default',
+          attributes: null,
           price: 100n,
           status: VariantStatus.ACTIVE,
           inventory: null,
@@ -101,7 +119,7 @@ describe('Storefront types / mappers', () => {
     };
 
     expect(toStorefrontProductView(product).variants).toEqual([
-      { id: 'variant-1', name: 'Default', price: 100, available: false },
+      { id: 'variant-1', name: 'Default', attributes: null, price: 100, available: false },
     ]);
   });
 

@@ -143,14 +143,14 @@ export default function CustomersPage() {
               <tbody>
                 {customers.map((customer) => (
                   <tr key={customer.id}>
-                    <td>
+                    <td data-label={t('customers.table.name')}>
                       <Link href={`/dashboard/customers/${customer.id}`} className="link">
                         {displayName(customer)}
                       </Link>
                     </td>
-                    <td>{customer.email ?? '—'}</td>
-                    <td>{customer.phone ?? '—'}</td>
-                    <td>
+                    <td data-label={t('customers.table.email')}>{customer.email ?? '—'}</td>
+                    <td data-label={t('customers.table.phone')}>{customer.phone ?? '—'}</td>
+                    <td data-label="">
                       <div className="table__actions">
                         <Link
                           href={`/dashboard/customers/${customer.id}`}

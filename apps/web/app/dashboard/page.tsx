@@ -166,17 +166,17 @@ export default function DashboardPage() {
                 <tbody>
                   {stats.recentProducts.map((product: DashboardRecentProduct) => (
                     <tr key={product.id}>
-                      <td>
+                      <td data-label={t('dashboard.product')}>
                         <Link href={`/dashboard/products/${product.id}`} className="link">
                           {product.name}
                         </Link>
                         <span className="table__muted">/{product.slug}</span>
                       </td>
-                      <td>
+                      <td data-label={t('common.status')}>
                         <StatusBadge status={product.status} />
                       </td>
-                      <td>{product.variantsCount}</td>
-                      <td>{formatEgpHtml(product.price)}</td>
+                      <td data-label={t('dashboard.total')}>{product.variantsCount}</td>
+                      <td data-label={t('common.price')}>{formatEgpHtml(product.price)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -212,17 +212,19 @@ export default function DashboardPage() {
                 <tbody>
                   {stats.orders.recent.map((order: DashboardOrderSummary) => (
                     <tr key={order.id}>
-                      <td>
+                      <td data-label={t('dashboard.order')}>
                         <Link href={`/dashboard/orders/${order.id}`} className="link">
                           {order.orderNumber}
                         </Link>
                         <span className="table__muted">{formatDate(order.createdAt)}</span>
                       </td>
-                      <td>{order.customerEmail ?? order.customerPhone ?? '—'}</td>
-                      <td>
+                      <td data-label={t('dashboard.customer')}>
+                        {order.customerEmail ?? order.customerPhone ?? '—'}
+                      </td>
+                      <td data-label={t('common.status')}>
                         <StatusBadge status={order.status} />
                       </td>
-                      <td>{formatEgpHtml(order.grandTotal)}</td>
+                      <td data-label={t('dashboard.total')}>{formatEgpHtml(order.grandTotal)}</td>
                     </tr>
                   ))}
                 </tbody>

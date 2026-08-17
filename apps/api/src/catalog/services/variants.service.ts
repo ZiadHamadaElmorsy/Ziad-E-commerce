@@ -5,9 +5,10 @@ import {
   ConflictError,
   NotFoundError,
   StateTransitionError,
+  ValidationError,
 } from '../../common/errors/domain-exceptions';
 import { TransactionService } from '../../infrastructure/database/transaction.service';
-import { toVariantView, VariantView } from '../catalog.types';
+import { normalizeAttributes, toVariantView, VariantView } from '../catalog.types';
 import { mapCatalogWriteError } from '../domain/catalog-error.mapper';
 import { variantArchiveTarget } from '../domain/catalog-status';
 import { requireStoreId } from '../domain/catalog-tenant';
@@ -67,6 +68,8 @@ export class VariantsService {
     }
 
     const sku = dto.sku === undefined ? null : normalizeSku(dto.sku);
+    validateVariantAttributes(dto.attributes);
+    const attributes = normalizeAttributes(dto.attributes);
     try {
       const variant = await this.transaction.runWithTenant(storeId, (tx) => {
         // Phase 24 — SKU uniqueness is pre-checked WITHIN the store BEFORE the
@@ -87,6 +90,7 @@ export class VariantsService {
                 storeId,
                 productId,
                 name: dto.name,
+                ...(attributes !== null ? { attributes } : {}),
                 sku,
                 price: BigInt(dto.price),
                 ...(dto.compareAtPrice !== undefined
@@ -103,6 +107,7 @@ export class VariantsService {
           storeId,
           productId,
           name: dto.name,
+          ...(attributes !== null ? { attributes } : {}),
           sku: null,
           price: BigInt(dto.price),
           ...(dto.compareAtPrice !== undefined
@@ -120,6 +125,8 @@ export class VariantsService {
   async update(variantId: string, dto: UpdateVariantDto): Promise<VariantView> {
     const storeId = requireStoreId(this.requestContext);
 
+    const attributes = dto.attributes === undefined ? undefined : normalizeAttributes(dto.attributes);
+    validateVariantAttributes(dto.attributes);
     try {
       const updated = await this.transaction.runWithTenant(storeId, async (tx) => {
         // Same RLS-aware SKU-uniqueness pre-check (Phase 24): when the SKU is
@@ -134,6 +141,7 @@ export class VariantsService {
           }
           return this.variants.update(tx, storeId, variantId, {
             ...(dto.name !== undefined ? { name: dto.name } : {}),
+            ...(attributes !== undefined ? { attributes } : {}),
             sku,
             ...(dto.price !== undefined ? { price: BigInt(dto.price) } : {}),
             ...(dto.compareAtPrice !== undefined
@@ -143,6 +151,7 @@ export class VariantsService {
         }
         return this.variants.update(tx, storeId, variantId, {
           ...(dto.name !== undefined ? { name: dto.name } : {}),
+          ...(attributes !== undefined ? { attributes } : {}),
           ...(dto.price !== undefined ? { price: BigInt(dto.price) } : {}),
           ...(dto.compareAtPrice !== undefined
             ? { compareAtPrice: dto.compareAtPrice === null ? null : BigInt(dto.compareAtPrice) }
@@ -189,4 +198,21 @@ export class VariantsService {
 function normalizeSku(sku: string): string | null {
   const trimmed = sku.trim();
   return trimmed.length === 0 ? null : trimmed;
+}
+
+/**
+ * Rejects variant attributes that are not a flat map of string values
+ * (e.g. { color: 42 } → VALIDATION_ERROR). Called before normalizeAttributes so
+ * malformed payloads fail explicitly instead of being silently dropped.
+ */
+function validateVariantAttributes(attributes: unknown): void {
+  if (attributes === undefined || attributes === null) return;
+  if (typeof attributes !== 'object' || Array.isArray(attributes)) {
+    throw new ValidationError('Variant attributes must be an object of string values.');
+  }
+  for (const [key, value] of Object.entries(attributes as Record<string, unknown>)) {
+    if (typeof value !== 'string') {
+      throw new ValidationError(`Variant attribute "${key}" must be a string.`);
+    }
+  }
 }

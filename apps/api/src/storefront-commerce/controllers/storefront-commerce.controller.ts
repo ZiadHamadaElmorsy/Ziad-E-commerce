@@ -178,6 +178,19 @@ export class StorefrontCommerceController {
     return { data: payment };
   }
 
+  /**
+   * GET /storefront/orders/:orderId/tracking (Phase 27 — Part 13).
+   * Customer-friendly delivery tracking: ONE aggregated payload (order number,
+   * payment method/amount, customer-safe tracking number, timeline). Never
+   * exposes the shipping provider, provider ids, raw statuses or internal ids.
+   */
+  @Public()
+  @Get('orders/:orderId/tracking')
+  async getOrderTracking(@Req() request: Request, @Param('orderId') orderId: string) {
+    const tracking = await this.commerce.getOrderTracking(request, orderId);
+    return { data: tracking };
+  }
+
   @Public()
   @Get('orders/:orderId')
   async getOrder(

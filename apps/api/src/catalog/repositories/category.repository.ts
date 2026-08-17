@@ -19,6 +19,7 @@ export interface UpdateCategoryInput {
 
 /** Store-scoped list filter for the category collection endpoint. */
 export interface CategoryListFilter {
+  search?: string;
   skip: number;
   take: number;
   orderBy: Prisma.CategoryOrderByWithRelationInput;
@@ -89,14 +90,31 @@ export class CategoryRepository {
 
   async findMany(storeId: string, filter: CategoryListFilter): Promise<Category[]> {
     return this.prisma.category.findMany({
-      where: { storeId },
+      where: this.buildWhere(storeId, filter.search),
       skip: filter.skip,
       take: filter.take,
       orderBy: filter.orderBy,
     });
   }
 
-  async count(storeId: string): Promise<number> {
-    return this.prisma.category.count({ where: { storeId } });
+  async count(storeId: string, search?: string): Promise<number> {
+    return this.prisma.category.count({ where: this.buildWhere(storeId, search) });
+  }
+
+  private buildWhere(storeId: string, search?: string): Prisma.CategoryWhereInput {
+    const where: Prisma.CategoryWhereInput = { storeId };
+    if (search) {
+      const term = search.trim();
+      if (term.length > 0) {
+        where.OR = [
+          { name: { contains: term, mode: 'insensitive' } },
+          { slug: { contains: term, mode: 'insensitive' } },
+          ...(term.length >= 2
+            ? [{ nameAr: { contains: term, mode: Prisma.QueryMode.insensitive } }]
+            : []),
+        ];
+      }
+    }
+    return where;
   }
 }

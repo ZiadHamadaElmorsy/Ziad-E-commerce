@@ -46,10 +46,21 @@ describe('StorefrontRepository', () => {
       include: {
         variants: {
           where: { status: VariantStatus.ACTIVE },
-          include: { inventory: true },
+          select: {
+            id: true,
+            name: true,
+            attributes: true,
+            price: true,
+            status: true,
+            inventory: { select: { onHandQuantity: true, reservedQuantity: true } },
+          },
           orderBy: { createdAt: 'asc' },
         },
-        productMedia: { include: { media: true }, orderBy: { sortOrder: 'asc' } },
+        productMedia: {
+          select: { media: { select: { id: true, altText: true } } },
+          orderBy: [{ isPrimary: 'desc' }, { sortOrder: 'asc' }],
+          take: 1,
+        },
       },
     });
   });

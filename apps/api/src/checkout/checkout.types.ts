@@ -3,6 +3,8 @@ import {
   Order,
   OrderChannel,
   OrderItem,
+  OrderPaymentMethod,
+  OrderPaymentStatus,
   OrderStatus,
   ReservationStatus,
 } from '@prisma/client';
@@ -49,6 +51,10 @@ export interface CheckoutView {
   orderId: string;
   orderNumber: string;
   channel: OrderChannel;
+  /** How the order's payment is settled (ONLINE | COD) — Phase 27. */
+  paymentMethod: OrderPaymentMethod;
+  /** Order-level payment status (COD orders start UNPAID) — Phase 27. */
+  paymentStatus: OrderPaymentStatus;
   status: OrderStatus;
   currency: string;
   subtotal: number;
@@ -76,6 +82,8 @@ export function toCheckoutView(order: OrderWithDetails): CheckoutView {
     orderId: order.id,
     orderNumber: order.orderNumber,
     channel: order.channel,
+    paymentMethod: order.paymentMethod,
+    paymentStatus: order.paymentStatus,
     status: order.status,
     currency: order.currency,
     subtotal: Number(order.subtotal),

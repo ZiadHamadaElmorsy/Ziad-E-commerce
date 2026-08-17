@@ -14,6 +14,9 @@ import type { TenantContext } from '../../tenant/tenant-context';
  */
 export interface RequestContextData {
   requestId: string;
+  /** HTTP method + path of the current request (Phase 28 — structured logs). */
+  method?: string;
+  path?: string;
   /** Verified identity (JWT) — set by the authentication boundary. */
   user?: AuthenticatedUser;
   /** Resolved ACTIVE membership — set by the tenant boundary. */

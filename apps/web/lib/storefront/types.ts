@@ -33,22 +33,28 @@ export function whatsappContactUrl(phoneNumber: string, message: string): string
 export interface StorefrontImage {
   id: string;
   altText: string | null;
+  /** Variant the image is linked to, or null for product-level images. */
+  variantId?: string | null;
+  isPrimary?: boolean;
+  sortOrder?: number;
+}
+
+/** A storefront gallery association (media id + variant link + order). */
+export interface StorefrontProductMedia {
+  mediaId: string;
+  variantId: string | null;
+  altText: string | null;
+  sortOrder: number;
+  isPrimary: boolean;
 }
 
 export interface StorefrontVariant {
   id: string;
   name: string;
+  /** Structured variant attributes (e.g. { color: 'Black', size: 'M' }). */
+  attributes: Record<string, string> | null;
   price: number;
   available: boolean;
-}
-
-export interface StorefrontProduct {
-  id: string;
-  name: string;
-  slug: string;
-  description: string | null;
-  images: StorefrontImage[];
-  variants: StorefrontVariant[];
 }
 
 export interface StorefrontCategory {
@@ -56,6 +62,20 @@ export interface StorefrontCategory {
   name: string;
   slug: string;
   description: string | null;
+}
+
+export interface StorefrontProduct {
+  id: string;
+  name: string;
+  slug: string;
+  description: string | null;
+  /** ACTIVE categories (breadcrumbs / category browsing). */
+  categories: StorefrontCategory[];
+  /** First page of the ordered gallery (bounded). */
+  images: StorefrontImage[];
+  /** Total attached media count (gallery pagination). */
+  totalImages: number;
+  variants: StorefrontVariant[];
 }
 
 export interface StorefrontCategoryDetail extends StorefrontCategory {
@@ -157,6 +177,8 @@ export interface CheckoutShippingAddressInput {
 export interface CheckoutInput {
   customer: CheckoutCustomerInput;
   shippingAddress: CheckoutShippingAddressInput;
+  /** ONLINE (default) or COD — Phase 27. */
+  paymentMethod?: OrderPaymentMethod;
 }
 
 export type OrderStatus =
@@ -169,6 +191,12 @@ export type OrderStatus =
 
 /** Order acquisition/payment channel (Phase 22). */
 export type OrderChannel = 'ONLINE_PAYMENT' | 'WHATSAPP';
+
+/** How the order's payment is settled (Phase 27). */
+export type OrderPaymentMethod = 'ONLINE' | 'COD';
+
+/** Order-level payment status (Phase 27) — separate from order lifecycle. */
+export type OrderPaymentStatus = 'PAID' | 'UNPAID' | 'FAILED' | 'REFUNDED';
 
 export type PaymentStatus = 'PENDING' | 'PROCESSING' | 'SUCCEEDED' | 'FAILED';
 
@@ -195,6 +223,10 @@ export interface CheckoutResult {
   orderId: string;
   orderNumber: string;
   channel: OrderChannel;
+  /** How the order's payment is settled (ONLINE | COD) — Phase 27. */
+  paymentMethod: OrderPaymentMethod;
+  /** Order-level payment status (COD orders start UNPAID) — Phase 27. */
+  paymentStatus: OrderPaymentStatus;
   status: OrderStatus;
   currency: string;
   subtotal: number;
@@ -250,6 +282,10 @@ export interface StorefrontOrderView {
   id: string;
   orderNumber: string;
   channel: OrderChannel;
+  /** How the order's payment is settled (ONLINE | COD) — Phase 27. */
+  paymentMethod: OrderPaymentMethod;
+  /** Order-level payment status (PAID/UNPAID/FAILED/REFUNDED) — Phase 27. */
+  paymentStatus: OrderPaymentStatus;
   status: OrderStatus;
   currency: string;
   subtotal: number;
@@ -268,7 +304,6 @@ export interface StorefrontOrderView {
   updatedAt: string;
   confirmedAt: string | null;
   cancelledAt: string | null;
-  paymentStatus: PaymentStatus | null;
   paymentFailureMessage: string | null;
 }
 
@@ -276,4 +311,49 @@ export interface StorefrontOrderView {
 export interface WhatsAppOrderResult {
   order: CheckoutResult;
   whatsappUrl: string;
+}
+
+// --- Customer tracking (Phase 27 — Part 13) ---------------------------------
+
+/** Customer-friendly delivery timeline step (Part 13). */
+export type CustomerTimelineStep =
+  | 'ORDER_CONFIRMED'
+  | 'HANDED_TO_COURIER'
+  | 'AT_DELIVERY_CENTER'
+  | 'OUT_FOR_DELIVERY'
+  | 'DELIVERED';
+
+export interface CustomerTimelineEntry {
+  step: CustomerTimelineStep;
+  state: 'done' | 'current' | 'upcoming';
+}
+
+/**
+ * Aggregated customer tracking payload (Part 13/18). The customer NEVER sees
+ * the shipping provider name, provider ids, raw provider statuses or internal
+ * database ids — only the customer-safe tracking number and friendly statuses.
+ */
+export interface CustomerTrackingView {
+  order: {
+    id: string;
+    orderNumber: string;
+    status: OrderStatus;
+    createdAt: string;
+  };
+  payment: {
+    method: OrderPaymentMethod;
+    status: OrderPaymentStatus;
+    /** Amount to collect on delivery — only relevant for COD. */
+    codAmount: number;
+  };
+  tracking: {
+    trackingNumber: string | null;
+    /** Customer-friendly status key (e.g. 'OUT_FOR_DELIVERY'). */
+    status: string;
+    /** Ordered delivery timeline with done/current/upcoming states. */
+    timeline: CustomerTimelineEntry[];
+    /** Customer-friendly status history milestones. */
+    milestones: Array<{ status: string; at: string }>;
+    deliveredAt: string | null;
+  };
 }

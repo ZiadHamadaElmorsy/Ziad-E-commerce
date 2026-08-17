@@ -1,5 +1,12 @@
 import { Type } from 'class-transformer';
-import { IsEmail, IsNotEmpty, IsOptional, IsString, ValidateNested } from 'class-validator';
+import {
+  IsEmail,
+  IsIn,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  ValidateNested,
+} from 'class-validator';
 
 /**
  * POST /api/v1/checkout request body (docs/API-SPEC.md §22 "Create Checkout",
@@ -73,4 +80,16 @@ export class CheckoutRequestDto {
   @ValidateNested()
   @Type(() => CheckoutShippingAddressDto)
   shippingAddress!: CheckoutShippingAddressDto;
+
+  /**
+   * How the customer wants to pay (Phase 27 — Part 6/12):
+   *   ONLINE (default) — provider-hosted card checkout (Paymob); the order
+   *     becomes PAID on webhook confirmation.
+   *   COD              — Cash on Delivery; the order is created UNPAID and
+   *     becomes PAID only after the carrier confirms delivery/collection.
+   * Optional to preserve the existing contract (defaults to ONLINE).
+   */
+  @IsOptional()
+  @IsIn(['ONLINE', 'COD'])
+  paymentMethod?: 'ONLINE' | 'COD';
 }

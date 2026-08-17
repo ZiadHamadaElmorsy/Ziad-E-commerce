@@ -7,6 +7,7 @@ import { useI18n } from '@/lib/i18n/i18n-context';
 import { customersApi } from '@/lib/api/customers';
 import type { CustomerOrderView, CustomerView } from '@/lib/api/types';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { Breadcrumbs } from '@/components/ui/Breadcrumbs';
 import { Card } from '@/components/ui/Card';
 import { StatusBadge } from '@/components/ui/Badge';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -81,6 +82,13 @@ export default function CustomerDetailsPage() {
 
   return (
     <div className="page">
+      <Breadcrumbs
+        items={[
+          { label: t('nav.dashboard'), href: '/dashboard' },
+          { label: t('nav.customers'), href: '/dashboard/customers' },
+          { label: displayName },
+        ]}
+      />
       <PageHeader
         title={displayName}
         description={customer.email ?? '—'}
@@ -123,16 +131,20 @@ export default function CustomerDetailsPage() {
                   <tbody>
                     {orders.map((order) => (
                       <tr key={order.id}>
-                        <td>
+                        <td data-label={t('customers.details.order')}>
                           <Link href={`/dashboard/orders/${order.id}`} className="link">
                             {order.orderNumber}
                           </Link>
                         </td>
-                        <td>{formatDate(order.createdAt)}</td>
-                        <td>
+                        <td data-label={t('customers.details.date')}>
+                          {formatDate(order.createdAt)}
+                        </td>
+                        <td data-label={t('common.status')}>
                           <StatusBadge status={order.status} />
                         </td>
-                        <td>{formatEgpHtml(order.grandTotal)}</td>
+                        <td data-label={t('customers.details.total')}>
+                          {formatEgpHtml(order.grandTotal)}
+                        </td>
                       </tr>
                     ))}
                   </tbody>

@@ -107,6 +107,8 @@ export interface VariantView {
   id: string;
   productId: string;
   name: string;
+  /** Structured variant attributes (e.g. { color: 'Black', size: 'M' }). */
+  attributes: Record<string, string> | null;
   sku: string | null;
   /** Integer minor units (EGP piastres). Divide by 100 for the display price. */
   price: number;
@@ -121,9 +123,25 @@ export interface ProductImage {
   altText: string | null;
 }
 
+/** A ProductMedia gallery row (association + minimal media metadata). */
+export interface ProductMediaView {
+  id: string;
+  mediaId: string;
+  variantId: string | null;
+  altText: string | null;
+  sortOrder: number;
+  isPrimary: boolean;
+  mediaType: MediaType;
+  mimeType: string | null;
+  sizeBytes: number | null;
+  createdAt: string;
+}
+
 export interface ProductView {
   id: string;
   name: string;
+  nameAr: string | null;
+  nameEn: string | null;
   slug: string;
   description: string | null;
   status: ProductStatus;
@@ -135,6 +153,8 @@ export interface ProductView {
 export interface CategoryView {
   id: string;
   name: string;
+  nameAr: string | null;
+  nameEn: string | null;
   slug: string;
   description: string | null;
   status: CategoryStatus;
@@ -160,29 +180,39 @@ export interface Envelope<T> {
 
 export interface CreateCategoryInput {
   name: string;
+  nameAr?: string;
+  nameEn?: string;
   description?: string;
 }
 
 export interface UpdateCategoryInput {
   name?: string;
+  nameAr?: string | null;
+  nameEn?: string | null;
   /** Pass `null` to clear the description. */
   description?: string | null;
 }
 
 export interface CreateProductInput {
   name: string;
+  nameAr?: string;
+  nameEn?: string;
   description?: string;
   status?: ProductStatus;
 }
 
 export interface UpdateProductInput {
   name?: string;
+  nameAr?: string | null;
+  nameEn?: string | null;
   /** Pass `null` to clear the description. */
   description?: string | null;
 }
 
 export interface CreateVariantInput {
   name: string;
+  /** Structured variant attributes (e.g. { color: 'Black', size: 'M' }). */
+  attributes?: Record<string, string>;
   sku?: string;
   price: number;
   /** Pass `null` to create the variant without a compare-at price. */
@@ -191,6 +221,7 @@ export interface CreateVariantInput {
 
 export interface UpdateVariantInput {
   name?: string;
+  attributes?: Record<string, string>;
   sku?: string;
   price?: number;
   /** Pass `null` to clear the compare-at price. */
@@ -215,20 +246,58 @@ export interface ListProductsParams {
 export interface ListCategoriesParams {
   page?: number;
   limit?: number;
+  search?: string;
+}
+
+// --- Product gallery (Phase 26) ----------------------------------------------
+
+export interface AttachProductMediaInput {
+  variantId?: string;
+  isPrimary?: boolean;
+  altText?: string;
+}
+
+export interface UpdateProductMediaInput {
+  sortOrder?: number;
+  isPrimary?: boolean;
+  variantId?: string | null;
+  altText?: string | null;
+}
+
+export interface ListProductMediaParams {
+  page?: number;
+  limit?: number;
+  variantId?: string;
 }
 
 // --- Orders --------------------------------------------------------------------
 
 export type OrderStatus =
-  'PENDING' | 'CONFIRMED' | 'PROCESSING' | 'SHIPPED' | 'DELIVERED' | 'CANCELLED';
+  | 'PENDING'
+  | 'CONFIRMED'
+  | 'PROCESSING'
+  | 'SHIPPED'
+  | 'DELIVERED'
+  | 'RETURNED'
+  | 'CANCELLED';
 
 /** Order acquisition/payment channel (Phase 22). */
 export type OrderChannel = 'ONLINE_PAYMENT' | 'WHATSAPP';
+
+/** How the order's payment is settled (Phase 27). */
+export type OrderPaymentMethod = 'ONLINE' | 'COD';
+
+/** Order-level payment status (Phase 27). */
+export type OrderPaymentStatus = 'PAID' | 'UNPAID' | 'FAILED' | 'REFUNDED';
 
 export interface OrderSummaryView {
   id: string;
   orderNumber: string;
   channel: OrderChannel;
+  /** How the order's payment is settled (ONLINE | COD) — Phase 27. */
+  paymentMethod: OrderPaymentMethod;
+  /** Order-level payment status (PAID/UNPAID/FAILED/REFUNDED) — Phase 27. */
+  paymentStatus: OrderPaymentStatus;
   status: OrderStatus;
   currency: string;
   grandTotal: number;
@@ -262,6 +331,10 @@ export interface OrderView {
   id: string;
   orderNumber: string;
   channel: OrderChannel;
+  /** How the order's payment is settled (ONLINE | COD) — Phase 27. */
+  paymentMethod: OrderPaymentMethod;
+  /** Order-level payment status (PAID/UNPAID/FAILED/REFUNDED) — Phase 27. */
+  paymentStatus: OrderPaymentStatus;
   status: OrderStatus;
   currency: string;
   subtotal: number;
@@ -377,6 +450,48 @@ export interface DashboardRecentProduct {
   /** Price (minor units) of the first ACTIVE variant, or null when none is active. */
   price: number | null;
   variantsCount: number;
+}
+
+// --- Shipping (Phase 27 — merchant shipment management) ----------------------
+
+export type ShipmentStatus =
+  | 'CREATED'
+  | 'HANDED_TO_COURIER'
+  | 'AT_DELIVERY_CENTER'
+  | 'OUT_FOR_DELIVERY'
+  | 'DELIVERED'
+  | 'REJECTED'
+  | 'DELIVERY_FAILED'
+  | 'RETURNED'
+  | 'CANCELLED';
+
+export interface ShipmentHistoryView {
+  id: string;
+  previousStatus: ShipmentStatus | null;
+  newStatus: ShipmentStatus;
+  providerStatus: string | null;
+  source: string;
+  createdAt: string;
+}
+
+/** Merchant shipment view (Part 10 — dashboard order details). */
+export interface ShipmentView {
+  id: string;
+  orderId: string;
+  /** The shipping provider the merchant can see (Bosta). */
+  provider: 'BOSTA';
+  trackingNumber: string | null;
+  status: ShipmentStatus;
+  codAmount: number;
+  shippingCost: number;
+  createdAt: string;
+  updatedAt: string;
+  deliveredAt: string | null;
+  /** Merchant-facing operational error message (sanitized). */
+  errorMessage: string | null;
+  /** Merchant-facing shipping label URL. */
+  printedLabelUrl: string | null;
+  statusHistory: ShipmentHistoryView[];
 }
 
 export interface DashboardOrderSummary {
