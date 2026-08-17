@@ -1,0 +1,64 @@
+=== API UNIT TESTS ===
+[33m[Nest] 25924  - [39m08/17/2026, 6:08:01 PM [33m   WARN[39m [38;5;3m[AllExceptionsFilter] [39m[33m[req-1] Request GET /api/v1/test failed with status 404[39m
+[33m[Nest] 25924  - [39m08/17/2026, 6:08:01 PM [33m   WARN[39m [38;5;3m[AllExceptionsFilter] [39m[33m[req-1] Request GET /api/v1/test failed with status 400[39m
+[33m[Nest] 25924  - [39m08/17/2026, 6:08:01 PM [33m   WARN[39m [38;5;3m[AllExceptionsFilter] [39m[33m[req-1] Request GET /api/v1/test failed with code STATE_TRANSITION (409)[39m
+[33m[Nest] 25924  - [39m08/17/2026, 6:08:01 PM [33m   WARN[39m [38;5;3m[AllExceptionsFilter] [39m[33m[req-1] Request GET /api/v1/test failed with code NOT_FOUND (404)[39m
+[33m[Nest] 25924  - [39m08/17/2026, 6:08:01 PM [33m   WARN[39m [38;5;3m[AllExceptionsFilter] [39m[33m[req-1] Request GET /api/v1/test failed with code UNAUTHORIZED (401)[39m
+[33m[Nest] 25924  - [39m08/17/2026, 6:08:01 PM [33m   WARN[39m [38;5;3m[AllExceptionsFilter] [39m[33m[req-1] Request GET /api/v1/test failed with code IDEMPOTENCY_CONFLICT (409)[39m
+[32m[Nest] 22408  - [39m08/17/2026, 6:08:03 PM [32m    LOG[39m [38;5;3m[ReservationExpiryJob] [39m[32mExpiry sweep complete: 2 stores, 2 carts expired, 2 reservations released.[39m
+[32m[Nest] 22408  - [39m08/17/2026, 6:08:03 PM [32m    LOG[39m [38;5;3m[ReservationExpiryJob] [39m[32mExpiry sweep skipped: another instance holds the sweep lease.[39m
+[33m[Nest] 22408  - [39m08/17/2026, 6:08:03 PM [33m   WARN[39m [38;5;3m[ReservationExpiryJob] [39m[33mExpiry sweep failed for store store-1: db down[39m
+[32m[Nest] 22408  - [39m08/17/2026, 6:08:03 PM [32m    LOG[39m [38;5;3m[ReservationExpiryJob] [39m[32mExpiry sweep complete: 2 stores, 1 carts expired, 1 reservations released.[39m
+[32m[Nest] 22408  - [39m08/17/2026, 6:08:03 PM [32m    LOG[39m [38;5;3m[ReservationExpiryJob] [39m[32mExpiry sweep complete: 1 stores, 0 carts expired, 0 reservations released.[39m
+[32m[Nest] 22408  - [39m08/17/2026, 6:08:03 PM [32m    LOG[39m [38;5;3m[ReservationExpiryJob] [39m[32mExpiry sweep complete: 1 stores, 0 carts expired, 0 reservations released.[39m
+[32m[Nest] 22408  - [39m08/17/2026, 6:08:03 PM [32m    LOG[39m [38;5;3m[ReservationExpiryJob] [39m[32mCart/reservation expiry sweep is disabled (RESERVATION_EXPIRY_ENABLED is not truthy).[39m
+[32m[Nest] 22408  - [39m08/17/2026, 6:08:03 PM [32m    LOG[39m [38;5;3m[ReservationExpiryJob] [39m[32mCart/reservation expiry sweep scheduled every 60000ms.[39m
+[32m[Nest] 25924  - [39m08/17/2026, 6:08:04 PM [32m    LOG[39m [38;5;3m[PaymobWebhookService] [39m[32mpaymob webhook duplicate: eventId=event-1 providerEventId=txn-1 status=already_processed[39m
+[32m[Nest] 25924  - [39m08/17/2026, 6:08:04 PM [32m    LOG[39m [38;5;3m[PaymobWebhookService] [39m[32mpaymob webhook processed: eventId=event-1 providerEventId=txn-1 paymentId=payment-1 storeId=store-1 status=processed[39m
+[33m[Nest] 25924  - [39m08/17/2026, 6:08:04 PM [33m   WARN[39m [38;5;3m[PaymobWebhookService] [39m[33mpaymob webhook unresolved: eventId=event-1 providerEventId=txn-1 status=payment_unresolved[39m
+[32m[Nest] 25924  - [39m08/17/2026, 6:08:04 PM [32m    LOG[39m [38;5;3m[PaymobWebhookService] [39m[32mpaymob webhook processed: eventId=event-1 providerEventId=txn-1 paymentId=payment-1 storeId=store-1 status=processed[39m
+[32m[Nest] 25924  - [39m08/17/2026, 6:08:04 PM [32m    LOG[39m [38;5;3m[PaymobWebhookService] [39m[32mpaymob webhook processed: eventId=event-1 providerEventId=txn-1 paymentId=payment-1 storeId=store-1 status=processed[39m
+[32m[Nest] 25924  - [39m08/17/2026, 6:08:04 PM [32m    LOG[39m [38;5;3m[PaymobWebhookService] [39m[32mpaymob webhook processed: eventId=event-1 providerEventId=txn-1 paymentId=payment-1 storeId=store-1 status=processed[39m
+[32m[Nest] 25924  - [39m08/17/2026, 6:08:04 PM [32m    LOG[39m [38;5;3m[PaymobWebhookService] [39m[32mpaymob webhook processed: eventId=event-1 providerEventId=txn-1 paymentId=payment-1 storeId=store-1 status=processed[39m
+[32m[Nest] 25924  - [39m08/17/2026, 6:08:04 PM [32m    LOG[39m [38;5;3m[PaymobWebhookService] [39m[32mpaymob webhook duplicate: eventId=event-1 providerEventId=txn-1 status=already_processed[39m
+[32m[Nest] 25924  - [39m08/17/2026, 6:08:04 PM [32m    LOG[39m [38;5;3m[PaymobWebhookService] [39m[32mpaymob webhook processed: eventId=event-1 providerEventId=txn-1 paymentId=payment-1 storeId=store-1 status=processed[39m
+[33m[Nest] 22408  - [39m08/17/2026, 6:08:05 PM [33m   WARN[39m [38;5;3m[MediaService] [39m[33mStorage object cleanup failed for media media-1 (store-1/media-1): Media storage is unavailable.[39m
+[32m[Nest] 18700  - [39m08/17/2026, 6:08:06 PM [32m    LOG[39m [38;5;3m[PaymobPaymentProvider] [39m[32mPaymob Accept is configured (Intention API + Unified Checkout).[39m
+[33m[Nest] 18700  - [39m08/17/2026, 6:08:06 PM [33m   WARN[39m [38;5;3m[PaymobPaymentProvider] [39m[33mPaymob is not configured for the Intention flow (PAYMOB_API_KEY / PAYMOB_INTEGRATION_ID / PAYMOB_PUBLIC_KEY).[39m
+[33m[Nest] 18700  - [39m08/17/2026, 6:08:06 PM [33m   WARN[39m [38;5;3m[PaymobPaymentProvider] [39m[33mPaymob is not configured for the Intention flow (PAYMOB_API_KEY / PAYMOB_INTEGRATION_ID / PAYMOB_PUBLIC_KEY).[39m
+[33m[Nest] 18700  - [39m08/17/2026, 6:08:06 PM [33m   WARN[39m [38;5;3m[PaymobPaymentProvider] [39m[33mPaymob Intention response did not include a client_secret.[39m
+[33m[Nest] 18700  - [39m08/17/2026, 6:08:06 PM [33m   WARN[39m [38;5;3m[PaymobPaymentProvider] [39m[33mPaymob API request failed with status 400.[39m
+[32m[Nest] 18700  - [39m08/17/2026, 6:08:06 PM [32m    LOG[39m [38;5;3m[PaymobPaymentProvider] [39m[32mPaymob webhook HMAC verified with the CLASSIC (legacy) field list.[39m
+[32m[Nest] 25176  - [39m08/17/2026, 6:08:06 PM [32m    LOG[39m [38;5;3m[PaymentEventRetryJob] [39m[32mPayment-event retry pass complete: scanned=1 processed=1 failed=0.[39m
+[32m[Nest] 25176  - [39m08/17/2026, 6:08:06 PM [32m    LOG[39m [38;5;3m[PaymentEventRetryJob] [39m[32mPayment-event retry skipped: another instance holds the retry lease.[39m
+[32m[Nest] 25176  - [39m08/17/2026, 6:08:06 PM [32m    LOG[39m [38;5;3m[PaymentEventRetryJob] [39m[32mPayment-event retry pass complete: scanned=1 processed=0 failed=1.[39m
+[32m[Nest] 25176  - [39m08/17/2026, 6:08:06 PM [32m    LOG[39m [38;5;3m[PaymentEventRetryJob] [39m[32mPayment-event retry pass complete: scanned=1 processed=0 failed=1.[39m
+[33m[Nest] 25176  - [39m08/17/2026, 6:08:06 PM [33m   WARN[39m [38;5;3m[PaymentEventRetryJob] [39m[33mpayment event retry failed: eventId=event-1 error=boom[39m
+[32m[Nest] 25176  - [39m08/17/2026, 6:08:06 PM [32m    LOG[39m [38;5;3m[PaymentEventRetryJob] [39m[32mPayment-event retry pass complete: scanned=2 processed=1 failed=1.[39m
+[32m[Nest] 18700  - [39m08/17/2026, 6:08:06 PM [32m    LOG[39m [38;5;3m[PaymobPaymentProvider] [39m[32mPaymob webhook HMAC verified with the CLASSIC (legacy) field list.[39m
+[33m[Nest] 18700  - [39m08/17/2026, 6:08:06 PM [33m   WARN[39m [38;5;3m[PaymobPaymentProvider] [39m[33mPaymob HMAC secret is not configured (PAYMOB_HMAC_SECRET missing); webhook verification fails closed.[39m
+[33m[Nest] 22408  - [39m08/17/2026, 6:08:07 PM [33m   WARN[39m [38;5;3m[SupabaseStorageProvider] [39m[33mSupabase Storage upload failed with status 500.[39m
+[33m[Nest] 22408  - [39m08/17/2026, 6:08:07 PM [33m   WARN[39m [38;5;3m[SupabaseStorageProvider] [39m[33mSupabase Storage upload request failed: connection refused[39m
+[33m[Nest] 22408  - [39m08/17/2026, 6:08:07 PM [33m   WARN[39m [38;5;3m[SupabaseStorageProvider] [39m[33mSupabase Storage is not configured (SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY / SUPABASE_STORAGE_BUCKET missing); failing closed.[39m
+[33m[Nest] 22408  - [39m08/17/2026, 6:08:07 PM [33m   WARN[39m [38;5;3m[SupabaseStorageProvider] [39m[33mSupabase Storage object not found during delete: store-1/media-1[39m
+[33m[Nest] 22408  - [39m08/17/2026, 6:08:07 PM [33m   WARN[39m [38;5;3m[SupabaseStorageProvider] [39m[33mSupabase Storage delete failed with status 403.[39m
+[33m[Nest] 22408  - [39m08/17/2026, 6:08:07 PM [33m   WARN[39m [38;5;3m[SupabaseStorageProvider] [39m[33mSupabase Storage delete request failed: socket hang up[39m
+[33m[Nest] 25176  - [39m08/17/2026, 6:08:08 PM [33m   WARN[39m [38;5;3m[SupabaseAuthProvider] [39m[33mSupabase authentication is not configured (SUPABASE_URL / SUPABASE_ANON_KEY missing); failing closed.[39m
+[33m[Nest] 25176  - [39m08/17/2026, 6:08:08 PM [33m   WARN[39m [38;5;3m[SupabaseAuthProvider] [39m[33mSupabase authentication is not configured (SUPABASE_URL / SUPABASE_ANON_KEY missing); failing closed.[39m
+[33m[Nest] 25176  - [39m08/17/2026, 6:08:08 PM [33m   WARN[39m [38;5;3m[SupabaseAuthProvider] [39m[33mSupabase Auth request failed: network down[39m
+
+=== WEB UNIT TESTS ===
+
+ RUN  v4.1.10 C:/Users/Ziad/Projects/Ziad E-commerce/apps/web
+
+
+ Test Files  26 passed (26)
+      Tests  133 passed (133)
+   Start at  18:08:20
+   Duration  33.30s (transform 11.79s, setup 22.95s, import 21.38s, tests 22.79s, environment 120.86s)
+
+
+=== API TYPECHECK ===
+API Typecheck Success
+=== WEB TYPECHECK ===
+Web Typecheck Success

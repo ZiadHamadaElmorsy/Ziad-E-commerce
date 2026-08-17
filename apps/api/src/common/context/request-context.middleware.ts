@@ -1,40 +1,4 @@
 import { Injectable, NestMiddleware } from '@nestjs/common';
-import { Request, Response, NextFunction } from 'express';
-import { ConfigService } from '@nestjs/config';
-import { StoreRepository } from '../../store-settings/repositories/store.repository';
-import { RequestContext } from './request-context';
-
-@Injectable()
-export class RequestContextMiddleware implements NestMiddleware {
-  constructor(
-    private configService: ConfigService,
-    private storeRepository: StoreRepository,
-  ) {}
-
-  async use(req: Request, res: Response, next: NextFunction) {
-    const { headers, cookies } = req;
-    const storeSlug = headers['x-store-slug'] || cookies['store_slug'];
-
-    if (storeSlug) {
-      const store = await this.storeRepository.findBySlug(storeSlug);
-      if (store) {
-        RequestContext.setCurrent({
-          storeId: store.id,
-          storeMembership: store.membership,
-        });
-      } else {
-        // Store not found - fail closed
-        throw new Error('Invalid store context');
-      }
-    } else {
-      // No store context provided - fail closed
-      throw new Error('Store context required');
-    }
-
-    next();
-  }
-}
-import { Injectable, NestMiddleware } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import type { NextFunction, Request, Response } from 'express';
 import {
@@ -87,3 +51,4 @@ export class RequestContextMiddleware implements NestMiddleware {
     return randomUUID();
   }
 }
+
